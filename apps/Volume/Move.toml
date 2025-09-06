@@ -1,9 +1,10 @@
 [package]
-name = "contract"
-version = "0.0.1"
-
-[addresses]
-Contract = "0x1"
+name = "HelloWorld"
+version = "0.1.0"
+edition = "2024"
 
 [dependencies]
-AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", rev = "main", subdir = "aptos-move/framework/aptos-framework" }
+
+[addresses]
+std = "0x1"
+HelloWorld = "0x1"

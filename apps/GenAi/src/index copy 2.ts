@@ -13,7 +13,6 @@ app.use(express.json());
 
 const port = process.env.PORT || 3002;
 
-// ---------------------- Interfaces ----------------------
 interface PerplexityMessage {
   role: "user" | "system" | "assistant";
   content: string;
@@ -133,7 +132,7 @@ async function generateMoveToml(
   contractName: string,
   address: string,
 ): Promise<string> {
-  const systemPrompt = `You are an expert Move project manager. Generate a proper Move.toml file for a project that contains a module named the same as this contracts name "${contractName}" deployed under address "${address}". Ensure all dependencies, addresses, and package info are correct. Only return the TOML content.`;
+  const systemPrompt = `You are an expert Move project manager. Generate a proper Move.toml file for a project that contains a module named "${contractName}" deployed under address "${address}". Ensure all dependencies, addresses, and package info are correct. Only return the TOML content.`;
 
   const messages: PerplexityMessage[] = [
     { role: "system", content: systemPrompt },
@@ -196,6 +195,119 @@ app.post("/generate-full-suite", async (req, res) => {
     });
   }
 });
+
+// ---------------------- Fixed Deploy Contract Endpoint ----------------------
+// ---------------------- Simple Deploy Contract Endpoint ----------------------
+// app.post("/deploy-contract", async (req, res) => {
+//   let tempKeyFile: string | null = null;
+//   let tempPubKeyFile: string | null = null;
+  
+//   try {
+//     // 1️⃣ Generate keypair (creates both private and public key files)
+//     tempKeyFile = path.join(__dirname, `temp_key_${Date.now()}.txt`);
+//     tempPubKeyFile = `${tempKeyFile}.pub`;
+
+//     console.log("Generating keypair...");
+//     await new Promise<void>((resolve, reject) => {
+//       exec(
+//         `aptos key generate --output-file ${tempKeyFile} --assume-yes`,
+//         (error, stdout, stderr) => {
+//           if (error) return reject(new Error(`Key generation failed: ${stderr || error.message}`));
+//           console.log("Keypair generated successfully");
+//           resolve();
+//         },
+//       );
+//     });
+
+//     // 2️⃣ Get account address from public key file
+//     console.log("Getting account address...");
+//     const addressOutput: string = await new Promise((resolve, reject) => {
+//       exec(
+//         `aptos account lookup-address --public-key-file ${tempPubKeyFile} --url https://fullnode.devnet.aptoslabs.com`,
+//         (error, stdout, stderr) => {
+//           if (error) return reject(new Error(`Address lookup failed: ${stderr || error.message}`));
+//           resolve(stdout);
+//         },
+//       );
+//     });
+
+//     // Parse address
+//     const addressMatch = addressOutput.match(/"Result":\s*"([0-9a-f]+)"/);
+//     if (!addressMatch) {
+//       throw new Error(`Failed to parse address: ${addressOutput}`);
+//     }
+//     const address = `0x${addressMatch[1]}`;
+//     console.log("Account address:", address);
+
+//     // 3️⃣ Read private key
+//     const privateKey = await readFile(tempKeyFile, "utf-8");
+
+//     // 4️⃣ Fund account
+//     console.log("Funding account...");
+//     try {
+//       await new Promise<void>((resolve, reject) => {
+//         exec(
+//           `aptos account fund-with-faucet --account ${address} --url https://fullnode.devnet.aptoslabs.com`,
+//           (error, stdout, stderr) => {
+//             if (error) console.warn("Funding failed:", stderr);
+//             else console.log("Account funded");
+//             resolve(); // Continue regardless
+//           },
+//         );
+//       });
+//       // Wait for funding to propagate
+//       await new Promise(resolve => setTimeout(resolve, 2000));
+//     } catch (err) {
+//       console.warn("Funding error:", err);
+//     }
+
+//     // 5️⃣ Deploy contract
+//     console.log("Deploying contract...");
+//     const contractPath = path.resolve(__dirname, "../../Volume");
+    
+//     const deployOutput = await new Promise<string>((resolve, reject) => {
+//       exec(
+//         `aptos move publish --package-dir ${contractPath} --private-key-file ${tempKeyFile} --url https://fullnode.devnet.aptoslabs.com --assume-yes`,
+//         { timeout: 120000 },
+//         (error, stdout, stderr) => {
+//           if (error) return reject(new Error(`Deployment failed: ${stderr || error.message}`));
+//           resolve(stdout);
+//         },
+//       );
+//     });
+
+//     console.log("Contract deployed successfully!");
+
+//     res.json({
+//       success: true,
+//       message: "Contract deployed successfully",
+//       account: {
+//         address,
+//         privateKey: privateKey.trim(),
+//       },
+//       deploymentOutput: deployOutput,
+//       explorerUrl: `https://explorer.aptoslabs.com/account/${address}?network=devnet`,
+//     });
+
+//   } catch (error: any) {
+//     console.error("Deploy error:", error);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message || error.toString(),
+//     });
+//   } finally {
+//     // Cleanup
+//     [tempKeyFile, tempPubKeyFile].forEach(file => {
+//       if (file) {
+//         try {
+//           require("fs").unlinkSync(file);
+//         } catch (e) {
+//           console.warn(`Failed to cleanup ${file}:`, e);
+//         }
+//       }
+//     });
+//   }
+// });
 
 app.post("/deploy-contract", async (req, res) => {
   let tempKeyFile: string | null = null;

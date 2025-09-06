@@ -426,7 +426,7 @@ const Page = () => {
         )}
 
         {/* Chat Messages */}
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <div className="flex-1 overflow-y-scroll p-4 flex flex-col gap-4">
           {messages.length > 0 ? (
             messages.map((msg, idx) => (
               <div key={idx} className="flex flex-col gap-2">

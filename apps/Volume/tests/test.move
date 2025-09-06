@@ -1,64 +1,160 @@
-module HelloWorldTests {
-    use std::vector;
-    use std::string;
+module 0x1::escrow_tests {
     use std::signer;
-    use HelloWorld;
+    use std::vector;
+    use std::error;
+    use std::option::Option;
+    use 0x1::escrow;
 
-    /// Helper function to convert vector<u8> to string for assertion messages
-    fun vector_to_string(v: vector<u8>): string::String {
-        string::utf8(v)
+    /// Helper function: create a new escrow and return the index (last in list)
+    fun create_and_get_index(account: &signer, recipient: address, amount: u64): u64 {
+        escrow::create_escrow(account, recipient, amount);
+        escrow::get_escrow_count(account) - 1
     }
 
-    #[test_only]
-    public fun test_init_and_get_greeting(account: &signer) {
-        // Initialize the GreetingHolder resource
-        HelloWorld::init(account);
+    #[test]
+    fun test_init_escrows_and_create() {
+        let sender = signer::spec_signer(0);
+        let recipient = signer::address_of(&signer::spec_signer(1));
+        // Init escrows
+        escrow::init_escrows(&sender);
+        let count = escrow::get_escrow_count(&sender);
+        assert!(count == 0, 1);
 
-        // Retrieve the greeting
-        let greeting = HelloWorld::get_greeting(account);
+        // Create escrow
+        escrow::create_escrow(&sender, recipient, 100);
+        let count = escrow::get_escrow_count(&sender);
+        assert!(count == 1, 2);
 
-        // Expected greeting bytes for "Hello, World!"
-        let expected = vector::from_bytes(b"Hello, World!");
-
-        // Assert the greeting matches the initialized message
-        assert!(greeting == expected, 100, vector_to_string(greeting));
+        let escrow_info = escrow::get_escrow(&sender, 0);
+        assert!(escrow_info.0 == signer::address_of(&sender), 3);
+        assert!(escrow_info.1 == recipient, 4);
+        assert!(escrow_info.2 == 100, 5);
+        assert!(!escrow_info.3, 6); // funded false
+        assert!(!escrow_info.4, 7); // released false
     }
 
-    #[test_only]
-    public fun test_set_greeting(account: &signer) {
-        // Initialize first
-        HelloWorld::init(account);
+    #[test]
+    fun test_fund_escrow_success() {
+        let sender = signer::spec_signer(10);
+        let recipient = signer::address_of(&signer::spec_signer(11));
+        let index = create_and_get_index(&sender, recipient, 50);
 
-        // New greeting message
-        let new_message = vector::from_bytes(b"Hi there!");
-
-        // Set the new greeting
-        HelloWorld::set_greeting(account, new_message.clone());
-
-        // Retrieve updated greeting
-        let updated_greeting = HelloWorld::get_greeting(account);
-
-        // Assert updated greeting matches the new message
-        assert!(updated_greeting == new_message, 101, vector_to_string(updated_greeting));
+        escrow::fund_escrow(&sender, index);
+        let escrow_info = escrow::get_escrow(&sender, index);
+        assert!(escrow_info.3, 8); // funded true
+        assert!(!escrow_info.4, 9); // released false
     }
 
-    #[test_only]
-    public fun test_init_fails_if_already_initialized(account: &signer) {
-        // Initialize once
-        HelloWorld::init(account);
+    #[test]
+    fun test_fund_escrow_already_funded_fail() {
+        let sender = signer::spec_signer(20);
+        let recipient = signer::address_of(&signer::spec_signer(21));
+        let index = create_and_get_index(&sender, recipient, 75);
 
-        // Attempting to initialize again should abort with code 1
-        // Since Move testing framework does not have direct try-catch,
-        // we simulate by expecting abort on second init call
-        let res = aborts_with(
-            || { HelloWorld::init(account); },
-            1
-        );
-
-        assert!(res, 102);
+        escrow::fund_escrow(&sender, index);
+        // Attempt to fund again must abort with ERR_ALREADY_FUNDED (2)
+        let res = error::catch_abort_code(|| escrow::fund_escrow(&sender, index));
+        assert!(res == escrow::ERR_ALREADY_FUNDED, 10);
     }
 
-    /// Helper function to test abort code for a function call
-    native fun aborts_with(f: &fun(), code: u64): bool;
+    #[test]
+    fun test_fund_escrow_not_owner_fail() {
+        let sender = signer::spec_signer(30);
+        let recipient = signer::address_of(&signer::spec_signer(31));
+        let index = create_and_get_index(&sender, recipient, 80);
 
+        let other = signer::spec_signer(32);
+        // Other account tries to fund escrow, should abort with ERR_NOT_ESCROW_OWNER (1)
+        let res = error::catch_abort_code(|| escrow::fund_escrow(&other, index));
+        assert!(res == escrow::ERR_NOT_ESCROW_OWNER, 11);
+    }
+
+    #[test]
+    fun test_release_escrow_success() {
+        let sender = signer::spec_signer(40);
+        let recipient = signer::address_of(&signer::spec_signer(41));
+        let index = create_and_get_index(&sender, recipient, 150);
+
+        escrow::fund_escrow(&sender, index);
+        escrow::release_escrow(&sender, signer::address_of(&sender), index);
+
+        let escrow_info = escrow::get_escrow(&sender, index);
+        assert!(escrow_info.4, 12); // released true
+    }
+
+    #[test]
+    fun test_release_escrow_not_funded_fail() {
+        let sender = signer::spec_signer(50);
+        let recipient = signer::address_of(&signer::spec_signer(51));
+        let index = create_and_get_index(&sender, recipient, 100);
+
+        // Attempt release before funding should abort with ERR_NOT_FUNDED (3)
+        let res = error::catch_abort_code(|| escrow::release_escrow(&sender, signer::address_of(&sender), index));
+        assert!(res == escrow::ERR_NOT_FUNDED, 13);
+    }
+
+    #[test]
+    fun test_release_escrow_not_owner_fail() {
+        let sender = signer::spec_signer(60);
+        let recipient = signer::address_of(&signer::spec_signer(61));
+        let index = create_and_get_index(&sender, recipient, 100);
+        escrow::fund_escrow(&sender, index);
+
+        let other = signer::spec_signer(62);
+        // Other account attempts to release - should abort with ERR_NOT_ESCROW_OWNER (1)
+        let res = error::catch_abort_code(|| escrow::release_escrow(&other, signer::address_of(&sender), index));
+        assert!(res == escrow::ERR_NOT_ESCROW_OWNER, 14);
+    }
+
+    #[test]
+    fun test_cancel_escrow_success() {
+        let sender = signer::spec_signer(70);
+        let recipient = signer::address_of(&signer::spec_signer(71));
+        let index = create_and_get_index(&sender, recipient, 200);
+
+        // Cancel before funding
+        escrow::cancel_escrow(&sender, index);
+        let count = escrow::get_escrow_count(&sender);
+        assert!(count == 0, 15);
+    }
+
+    #[test]
+    fun test_cancel_escrow_funded_fail() {
+        let sender = signer::spec_signer(80);
+        let recipient = signer::address_of(&signer::spec_signer(81));
+        let index = create_and_get_index(&sender, recipient, 300);
+        escrow::fund_escrow(&sender, index);
+
+        // Cancel after funding should abort with ERR_ALREADY_FUNDED (2)
+        let res = error::catch_abort_code(|| escrow::cancel_escrow(&sender, index));
+        assert!(res == escrow::ERR_ALREADY_FUNDED, 16);
+    }
+
+    #[test]
+    fun test_cancel_escrow_not_owner_fail() {
+        let sender = signer::spec_signer(90);
+        let recipient = signer::address_of(&signer::spec_signer(91));
+        let index = create_and_get_index(&sender, recipient, 400);
+
+        let other = signer::spec_signer(92);
+        // Other account attempts to cancel - abort ERR_NOT_ESCROW_OWNER (1)
+        let res = error::catch_abort_code(|| escrow::cancel_escrow(&other, index));
+        assert!(res == escrow::ERR_NOT_ESCROW_OWNER, 17);
+    }
+
+    #[test]
+    fun test_get_escrow_invalid_index_fail() {
+        let sender = signer::spec_signer(100);
+        escrow::init_escrows(&sender);
+        // No escrows created yet, index 0 invalid
+        let res = error::catch_abort_code(|| escrow::get_escrow(&sender, 0));
+        assert!(res == escrow::ERR_ESCROW_NOT_EXISTS, 18);
+    }
+
+    #[test]
+    fun test_get_escrow_count_no_escrows() {
+        let sender = signer::spec_signer(110);
+        let count = escrow::get_escrow_count(&sender);
+        assert!(count == 0, 19);
+    }
 }

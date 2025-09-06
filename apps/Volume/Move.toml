@@ -1,0 +1,9 @@
+[package]
+name = "contract"
+version = "0.0.1"
+
+[addresses]
+Contract = "0x1"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", rev = "main", subdir = "aptos-move/framework/aptos-framework" }

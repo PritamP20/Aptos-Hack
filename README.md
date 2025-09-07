@@ -62,7 +62,7 @@ my-turborepo/
 Clone the repo and install dependencies:
 
 ```sh
-git clone <your-repo-url>
+git clone https://github.com/PritamP20/Aptos-Hack.git
 cd my-turborepo
 npm install # or yarn install / pnpm install
 ```

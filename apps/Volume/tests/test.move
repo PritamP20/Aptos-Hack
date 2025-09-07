@@ -1,232 +1,303 @@
-module 0xe8d532de3a122759fdf2ed724e8461584bf2b282a55f500fd6473e814da7d264::student_management_tests {
+// escrow_test.move
+module 0x48bd1b77a08117f0a89a50314b84c22e1991d7feac0f1e8de90cede8b43ee151::escrow_test {
     use std::signer;
+    use std::error;
+    use std::coin;
     use std::string;
-    use std::vector;
-    use std::option;
+    use aptos_framework::timestamp;
+    use 0x48bd1b77a08117f0a89a50314b84c22e1991d7feac0f1e8de90cede8b43ee151::escrow;
 
-    use 0xe8d532de3a122759fdf2ed724e8461584bf2b282a55f500fd6473e814da7d264::student_management;
+    /// Dummy coin for testing
+    struct TestCoin has store, drop {}
 
-    #[test]
-    fun test_init_account() {
-        let alice = @0x1;
-        let alice_signer = signer::spec_test_signer(alice);
-
-        student_management::init_account(&alice_signer);
-
-        // Should be able to fetch empty student list
-        let students = student_management::get_students(alice);
-        assert!(vector::is_empty<Student>(students), 1);
+    /// Mint coins for testing
+    fun mint_for(account: &signer, amount: u64) {
+        coin::register<TestCoin>(account);
+        let coin_val = coin::mint<TestCoin>(amount);
+        coin::deposit<TestCoin>(signer::address_of(account), coin_val);
     }
 
     #[test]
-    fun test_add_student() {
-        let bob = @0x2;
-        let bob_signer = signer::spec_test_signer(bob);
-
-        student_management::init_account(&bob_signer);
-
-        let name1 = string::utf8(b"Alice");
-        let age1 = 20u8;
-        student_management::add_student(&bob_signer, name1, age1);
-
-        let students = student_management::get_students(bob);
-        assert!(vector::length<Student>(students) == 1, 2);
-
-        let s = vector::borrow<Student>(&students, 0);
-        assert!(s.id == 1, 3);
-        assert!(string::eq(&s.name, &string::utf8(b"Alice")), 4);
-        assert!(s.age == 20, 5);
-        assert!(s.owner == bob, 6);
+    public fun test_init_event_holder() {
+        let account = @0x1;
+        let s = signer::specify(account);
+        escrow::init_event_holder(&s);
+        assert!(exists<escrow::EscrowEventHolder>(account), 100);
     }
 
     #[test]
-    fun test_add_multiple_students() {
-        let carol = @0x3;
-        let carol_signer = signer::spec_test_signer(carol);
+    public fun test_create_escrow_success() {
+        let depositor_addr = @0x2;
+        let beneficiary_addr = @0x3;
+        let arbiter_addr = @0x4;
+        let amount = 100;
+        let depositor = signer::specify(depositor_addr);
 
-        student_management::init_account(&carol_signer);
+        // Setup
+        mint_for(&depositor, amount);
 
-        student_management::add_student(&carol_signer, string::utf8(b"Bob"), 18u8);
-        student_management::add_student(&carol_signer, string::utf8(b"Charlie"), 21u8);
+        escrow::init_event_holder(&depositor);
 
-        let students = student_management::get_students(carol);
-        assert!(vector::length<Student>(students) == 2, 7);
+        // Withdraw coins from depositor
+        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
 
-        let s0 = vector::borrow<Student>(&students, 0);
-        assert!(s0.id == 1, 8);
+        escrow::create_escrow<TestCoin>(
+            &depositor,
+            beneficiary_addr,
+            arbiter_addr,
+            amount,
+            coins
+        );
 
-        let s1 = vector::borrow<Student>(&students, 1);
-        assert!(s1.id == 2, 9);
+        assert!(exists<escrow::Escrow<TestCoin>>(depositor_addr), 101);
+
+        let (dep, ben, arb, amt, status, created_at) = escrow::get_escrow<TestCoin>(depositor_addr);
+        assert!(dep == depositor_addr, 102);
+        assert!(ben == beneficiary_addr, 103);
+        assert!(arb == arbiter_addr, 104);
+        assert!(amt == amount, 105);
+        assert!(status == escrow::STATUS_PENDING, 106);
     }
 
     #[test]
-    fun test_update_student_success() {
-        let dave = @0x4;
-        let dave_signer = signer::spec_test_signer(dave);
+    public fun test_create_escrow_zero_amount_should_fail() {
+        let depositor_addr = @0x5;
+        let beneficiary_addr = @0x6;
+        let arbiter_addr = @0x7;
+        let depositor = signer::specify(depositor_addr);
 
-        student_management::init_account(&dave_signer);
+        mint_for(&depositor, 100);
 
-        student_management::add_student(&dave_signer, string::utf8(b"Dave"), 19u8);
+        escrow::init_event_holder(&depositor);
 
-        // Update student id 1
-        student_management::update_student(&dave_signer, 1, string::utf8(b"David"), 20u8);
+        let coins = coin::withdraw<TestCoin>(depositor_addr, 100);
 
-        let s_opt = student_management::get_student(dave, 1);
-        assert!(option::is_some<Student>(&s_opt), 10);
-        let s = option::extract<Student>(s_opt);
-        assert!(string::eq(&s.name, &string::utf8(b"David")), 11);
-        assert!(s.age == 20, 12);
+        // Should fail due to zero amount
+        assert_abort_code(
+            escrow::EAMOUNT_ZERO,
+            fun () {
+                escrow::create_escrow<TestCoin>(
+                    &depositor,
+                    beneficiary_addr,
+                    arbiter_addr,
+                    0,
+                    coins
+                );
+            }
+        );
     }
 
     #[test]
-    fun test_update_student_not_found_should_abort() {
-        let eve = @0x5;
-        let eve_signer = signer::spec_test_signer(eve);
+    public fun test_create_escrow_duplicate_should_fail() {
+        let depositor_addr = @0x8;
+        let beneficiary_addr = @0x9;
+        let arbiter_addr = @0xa;
+        let amount = 100;
+        let depositor = signer::specify(depositor_addr);
 
-        student_management::init_account(&eve_signer);
+        mint_for(&depositor, amount);
 
-        let res = move {
-            student_management::update_student(&eve_signer, 99, string::utf8(b"NotExists"), 22u8);
-            false
-        } catch {
-            true
-        };
-        assert!(res, 13);
+        escrow::init_event_holder(&depositor);
+
+        let coins1 = coin::withdraw<TestCoin>(depositor_addr, amount);
+        escrow::create_escrow<TestCoin>(
+            &depositor,
+            beneficiary_addr,
+            arbiter_addr,
+            amount,
+            coins1
+        );
+
+        // Try to create another escrow for same depositor
+        let coins2 = coin::withdraw<TestCoin>(depositor_addr, amount);
+        assert_abort_code(
+            escrow::EESCROW_ALREADY_EXISTS,
+            fun () {
+                escrow::create_escrow<TestCoin>(
+                    &depositor,
+                    beneficiary_addr,
+                    arbiter_addr,
+                    amount,
+                    coins2
+                );
+            }
+        );
     }
 
     #[test]
-    fun test_update_student_not_owner_should_abort() {
-        let owner = @0x6;
-        let not_owner = @0x7;
-        let owner_signer = signer::spec_test_signer(owner);
-        let not_owner_signer = signer::spec_test_signer(not_owner);
+    public fun test_release_success() {
+        let depositor_addr = @0xb;
+        let beneficiary_addr = @0xc;
+        let arbiter_addr = @0xd;
+        let amount = 200;
+        let depositor = signer::specify(depositor_addr);
+        let arbiter = signer::specify(arbiter_addr);
 
-        student_management::init_account(&owner_signer);
-        student_management::add_student(&owner_signer, string::utf8(b"OwnerStudent"), 30u8);
+        mint_for(&depositor, amount);
 
-        // Second account tries to update owner's student
-        let res = move {
-            student_management::update_student(&not_owner_signer, 1, string::utf8(b"Imposter"), 99u8);
-            false
-        } catch {
-            true
-        };
-        assert!(res, 14);
+        escrow::init_event_holder(&depositor);
+
+        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
+        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
+
+        // Release funds
+        escrow::release<TestCoin>(&arbiter, depositor_addr);
+
+        let (_, _, _, _, status, _) = escrow::get_escrow<TestCoin>(depositor_addr);
+        assert!(status == escrow::STATUS_RELEASED, 201);
     }
 
     #[test]
-    fun test_remove_student_success() {
-        let frank = @0x8;
-        let frank_signer = signer::spec_test_signer(frank);
+    public fun test_release_not_arbiter_should_fail() {
+        let depositor_addr = @0xe;
+        let beneficiary_addr = @0xf;
+        let arbiter_addr = @0x10;
+        let wrong_arbiter_addr = @0x11;
+        let amount = 300;
 
-        student_management::init_account(&frank_signer);
+        let depositor = signer::specify(depositor_addr);
+        let wrong_arbiter = signer::specify(wrong_arbiter_addr);
 
-        student_management::add_student(&frank_signer, string::utf8(b"Frank"), 21u8);
+        mint_for(&depositor, amount);
 
-        student_management::remove_student(&frank_signer, 1);
+        escrow::init_event_holder(&depositor);
 
-        let students = student_management::get_students(frank);
-        assert!(vector::is_empty<Student>(students), 15);
+        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
+        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
 
-        let s_opt = student_management::get_student(frank, 1);
-        assert!(option::is_none<Student>(&s_opt), 16);
+        assert_abort_code(
+            escrow::ENOT_ARBITER,
+            fun () {
+                escrow::release<TestCoin>(&wrong_arbiter, depositor_addr);
+            }
+        );
     }
 
     #[test]
-    fun test_remove_student_not_found_should_abort() {
-        let grace = @0x9;
-        let grace_signer = signer::spec_test_signer(grace);
+    public fun test_release_already_released_or_cancelled_should_fail() {
+        let depositor_addr = @0x12;
+        let beneficiary_addr = @0x13;
+        let arbiter_addr = @0x14;
+        let amount = 400;
 
-        student_management::init_account(&grace_signer);
+        let depositor = signer::specify(depositor_addr);
+        let arbiter = signer::specify(arbiter_addr);
 
-        let res = move {
-            student_management::remove_student(&grace_signer, 123);
-            false
-        } catch {
-            true
-        };
-        assert!(res, 17);
+        mint_for(&depositor, amount);
+
+        escrow::init_event_holder(&depositor);
+
+        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
+        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
+
+        // Release
+        escrow::release<TestCoin>(&arbiter, depositor_addr);
+
+        // Try to release again
+        assert_abort_code(
+            escrow::EESCROW_NOT_PENDING,
+            fun () {
+                escrow::release<TestCoin>(&arbiter, depositor_addr);
+            }
+        );
+
+        // Cancel should also fail after release
+        assert_abort_code(
+            escrow::EESCROW_NOT_PENDING,
+            fun () {
+                escrow::cancel<TestCoin>(&arbiter, depositor_addr);
+            }
+        );
     }
 
     #[test]
-    fun test_remove_student_not_owner_should_abort() {
-        let owner = @0xa;
-        let not_owner = @0xb;
-        let owner_signer = signer::spec_test_signer(owner);
-        let not_owner_signer = signer::spec_test_signer(not_owner);
+    public fun test_cancel_success() {
+        let depositor_addr = @0x15;
+        let beneficiary_addr = @0x16;
+        let arbiter_addr = @0x17;
+        let amount = 500;
 
-        student_management::init_account(&owner_signer);
-        student_management::add_student(&owner_signer, string::utf8(b"OwnerStudent"), 23u8);
+        let depositor = signer::specify(depositor_addr);
+        let arbiter = signer::specify(arbiter_addr);
 
-        let res = move {
-            student_management::remove_student(&not_owner_signer, 1);
-            false
-        } catch {
-            true
-        };
-        assert!(res, 18);
+        mint_for(&depositor, amount);
+
+        escrow::init_event_holder(&depositor);
+
+        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
+        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
+
+        // Cancel escrow
+        escrow::cancel<TestCoin>(&arbiter, depositor_addr);
+
+        let (_, _, _, _, status, _) = escrow::get_escrow<TestCoin>(depositor_addr);
+        assert!(status == escrow::STATUS_CANCELLED, 301);
     }
 
     #[test]
-    fun test_get_students_empty_before_init() {
-        let h = @0xc;
-        // No init_account called
-        let students = student_management::get_students(h);
-        assert!(vector::is_empty<Student>(students), 19);
+    public fun test_cancel_not_arbiter_should_fail() {
+        let depositor_addr = @0x18;
+        let beneficiary_addr = @0x19;
+        let arbiter_addr = @0x1a;
+        let wrong_arbiter_addr = @0x1b;
+        let amount = 600;
+
+        let depositor = signer::specify(depositor_addr);
+        let wrong_arbiter = signer::specify(wrong_arbiter_addr);
+
+        mint_for(&depositor, amount);
+
+        escrow::init_event_holder(&depositor);
+
+        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
+        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
+
+        assert_abort_code(
+            escrow::ENOT_ARBITER,
+            fun () {
+                escrow::cancel<TestCoin>(&wrong_arbiter, depositor_addr);
+            }
+        );
     }
 
     #[test]
-    fun test_get_student_empty_before_init() {
-        let i = @0xd;
-        let s_opt = student_management::get_student(i, 1);
-        assert!(option::is_none<Student>(&s_opt), 20);
+    public fun test_get_escrow_not_found_should_fail() {
+        let not_exist_addr = @0x20;
+        assert_abort_code(
+            escrow::EESCROW_NOT_FOUND,
+            fun () {
+                escrow::get_escrow<TestCoin>(not_exist_addr);
+            }
+        );
     }
 
     #[test]
-    fun test_get_student_non_existent_id() {
-        let j = @0xe;
-        let j_signer = signer::spec_test_signer(j);
-        student_management::init_account(&j_signer);
-        student_management::add_student(&j_signer, string::utf8(b"Jenny"), 22u8);
+    public fun test_events_emitted_on_create_release_cancel() {
+        let depositor_addr = @0x21;
+        let beneficiary_addr = @0x22;
+        let arbiter_addr = @0x23;
+        let amount = 700;
 
-        let s_opt = student_management::get_student(j, 999);
-        assert!(option::is_none<Student>(&s_opt), 21);
-    }
+        let depositor = signer::specify(depositor_addr);
+        let arbiter = signer::specify(arbiter_addr);
 
-    #[test]
-    fun test_id_auto_increment_after_deletion() {
-        let k = @0xf;
-        let k_signer = signer::spec_test_signer(k);
+        mint_for(&depositor, amount);
 
-        student_management::init_account(&k_signer);
+        escrow::init_event_holder(&depositor);
 
-        student_management::add_student(&k_signer, string::utf8(b"Karl"), 25u8);
-        student_management::add_student(&k_signer, string::utf8(b"Karl2"), 26u8);
+        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
 
-        student_management::remove_student(&k_signer, 1);
+        // Create
+        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
 
-        student_management::add_student(&k_signer, string::utf8(b"Karl3"), 27u8);
+        let holder = borrow_global<escrow::EscrowEventHolder>(depositor_addr);
+        assert!(event::count(&holder.created_events) == 1, 401);
 
-        let students = student_management::get_students(k);
-        assert!(vector::length<Student>(students) == 2, 22);
+        // Release
+        escrow::release<TestCoin>(&arbiter, depositor_addr);
+        assert!(event::count(&holder.released_events) == 1, 402);
 
-        let s0 = vector::borrow<Student>(&students, 0);
-        let s1 = vector::borrow<Student>(&students, 1);
-
-        assert!(s0.id == 2 || s1.id == 2, 23);
-        assert!(s0.id == 3 || s1.id == 3, 24);
-    }
-
-    #[test]
-    fun test_event_handles_exist() {
-        let l = @0x10;
-        let l_signer = signer::spec_test_signer(l);
-
-        student_management::init_account(&l_signer);
-
-        // This test simply checks init_account does not abort and the account is ready for events
-        student_management::add_student(&l_signer, string::utf8(b"Leo"), 19u8);
-        student_management::update_student(&l_signer, 1, string::utf8(b"Leon"), 20u8);
-        student_management::remove_student(&l_signer, 1);
+        // No cancelled yet
+        assert!(event::count(&holder.cancelled_events) == 0, 403);
     }
 }

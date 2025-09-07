@@ -1,12 +1,12 @@
 [package]
 name = "Contract"
 version = "0.0.1"
-authors = ["Move Project Manager"]
+authors = ["Your Name <your.email@example.com>"]
 
 [addresses]
-Contract = "0xe8d532de3a122759fdf2ed724e8461584bf2b282a55f500fd6473e814da7d264"
+Contract = "0x48bd1b77a08117f0a89a50314b84c22e1991d7feac0f1e8de90cede8b43ee151"
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-core.git"
-rev = "mainnet"
+rev = "devnet"
 subdir = "aptos-move/framework/aptos-framework"

@@ -4,12 +4,15 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-Contract = "0xc28ce059e5716689b04a61d41593d3d8f33e85cd9534ebe64d551828468d6943"
+# Contract = "0xc28ce059e5716689b04a61d41593d3d8f33e85cd9534ebe64d551828468d6943"
+Contract = "0x5557ce722c8986927d41d146a4699649a0222c9e738fd8f6e97183d18644865b"
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-framework.git"
 rev = "devnet"
 subdir = "aptos-framework"
+
+# https://explorer.aptoslabs.com/txn/0x2139c115e27ccdd1ac2792f8b53a409be3177e2633bcd30950de795b8f2d5943?network=devnet
 
 
 

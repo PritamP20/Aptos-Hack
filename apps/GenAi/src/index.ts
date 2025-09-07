@@ -248,12 +248,41 @@ Publish: aptos move publish --package-dir <dir> --profile <profile>
 Run: aptos move run --function-id <addr>::<module>::<func> --args <args>
 
 
-Some common Errors:
-let owner_addr = address_of_module_owner();
+Some common Errors Avoid these erros:
+1. let owner_addr = address_of_module_owner();
    │         ^^^
    │         │
    │         Unexpected 'let'
    │         Expected ';'
+
+2. error: unexpected token
+         let duration = if end > start { end - start } else { 0 };
+   │                           ^^^
+   │                           │
+   │                           Unexpected 'end'
+   │                           Expected '('
+
+3. error: cannot pass "&signer" to a function which expects argument of type guid::GUID
+  let handle = event::new_event_handle<MessageChanged>(account);
+
+4.   error: undeclared receiver function "clone" for type "string::String"
+   move_to(account, MessageHolder { message: message.clone() });
+5. error: the function takes 1 argument but 2 were provided
+ event::emit(&mut events.change_events, MessageChanged {
+ │ │             account: addr,
+ │ │             old_message,
+ │ │             new_message: message,
+ │ │         });
+
+ 6. error: cannot pass "address" to a function which expects argument of type "&signer"
+   ┌─ /Users/pritam/Documents/Projects/AptosCrafter/apps/Volume/sources/Contract.move:92:46
+   │
+   │         let coins = coin::withdraw<CoinType>(admin_addr, amount);
+7. error: unbound module
+  ┌─ /Users/pritam/Documents/Projects/AptosCrafter/apps/Volume/sources/Contract.move:3:9
+  │
+  │     use std::address;
+  │         ^^^^^^^^^^^^ Invalid 'use'. Unbound module: '(std=0x1)::address'
 
 Use these in your Perplexity prompt to ensure generated contracts adhere to syntax, security, and best practices. For more, refer to aptos.dev docs.
 `;

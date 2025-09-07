@@ -1,184 +1,197 @@
-module 0xe8d532de3a122759fdf2ed724e8461584bf2b282a55f500fd6473e814da7d264::student_management {
+module 0x48bd1b77a08117f0a89a50314b84c22e1991d7feac0f1e8de90cede8b43ee151::escrow {
     use std::signer;
-    use std::string;
+    use std::address;
     use std::error;
     use std::event;
-    use std::vector;
-    use std::option;
+    use std::coin;
+    use std::string;
+    use aptos_framework::timestamp;
 
     /// Error codes
-    const EStudentAlreadyExists: u64 = 0;
-    const EStudentNotFound: u64 = 1;
-    const ENotOwner: u64 = 2;
+    const ENOT_DEPOSITOR: u64 = 0;
+    const ENOT_ARBITER: u64 = 1;
+    const ENOT_BENEFICIARY: u64 = 2;
+    const EESCROW_NOT_FOUND: u64 = 3;
+    const EESCROW_ALREADY_EXISTS: u64 = 4;
+    const EESCROW_NOT_PENDING: u64 = 5;
+    const EAMOUNT_ZERO: u64 = 6;
 
-    /// Struct representing a student
-    struct Student has store, drop, copy, key {
-        id: u64,
-        name: string::String,
-        age: u8,
-        owner: address,
+    /// Escrow status
+    const STATUS_PENDING: u8 = 0;
+    const STATUS_RELEASED: u8 = 1;
+    const STATUS_CANCELLED: u8 = 2;
+
+    /// Escrow resource
+    struct Escrow<CoinType> has key, store {
+        depositor: address,
+        beneficiary: address,
+        arbiter: address,
+        amount: u64,
+        status: u8,
+        created_at: u64,
+        coin: coin::Coin<CoinType>,
     }
 
-    /// Resource: Holds all students for an account
-    struct StudentBook has key {
-        next_id: u64,
-        students: vector<Student>,
-    }
-
-    /// Event: StudentAdded
+    /// Event emitted when an escrow is created
     #[event]
-    struct StudentAddedEvent has drop, store {
-        owner: address,
-        student_id: u64,
-        name: string::String,
+    struct EscrowCreatedEvent has drop, store {
+        escrow_id: address,
+        depositor: address,
+        beneficiary: address,
+        arbiter: address,
+        amount: u64,
+        timestamp: u64,
     }
 
-    /// Event: StudentUpdated
+    /// Event emitted when funds are released
     #[event]
-    struct StudentUpdatedEvent has drop, store {
-        owner: address,
-        student_id: u64,
-        new_name: string::String,
-        new_age: u8,
+    struct ReleasedEvent has drop, store {
+        escrow_id: address,
+        released_to: address,
+        amount: u64,
+        timestamp: u64,
     }
 
-    /// Event: StudentDeleted
+    /// Event emitted when funds are cancelled/refunded
     #[event]
-    struct StudentDeletedEvent has drop, store {
-        owner: address,
-        student_id: u64,
+    struct CancelledEvent has drop, store {
+        escrow_id: address,
+        refunded_to: address,
+        amount: u64,
+        timestamp: u64,
     }
 
-    /// Resource: Event handle container
-    struct StudentEvents has key {
-        added_handle: event::EventHandle<StudentAddedEvent>,
-        updated_handle: event::EventHandle<StudentUpdatedEvent>,
-        deleted_handle: event::EventHandle<StudentDeletedEvent>,
+    /// Resource to hold events
+    struct EscrowEventHolder has key {
+        created_events: event::EventHandle<EscrowCreatedEvent>,
+        released_events: event::EventHandle<ReleasedEvent>,
+        cancelled_events: event::EventHandle<CancelledEvent>,
     }
 
-    /// Initializes the student book and event handles for a new account
-    public entry fun init_account(account: &signer) {
+    /// Initialize event storage for the account
+    public entry fun init_event_holder(account: &signer) {
         let addr = signer::address_of(account);
         assert!(
-            !exists<StudentBook>(addr),
-            error::already_exists(EStudentAlreadyExists)
+            !exists<EscrowEventHolder>(addr),
+            error::already_exists(EESCROW_ALREADY_EXISTS)
         );
-        move_to(account, StudentBook {
-            next_id: 1,
-            students: vector::empty<Student>(),
-        });
-        move_to(account, StudentEvents {
-            added_handle: event::new_event_handle<StudentAddedEvent>(account),
-            updated_handle: event::new_event_handle<StudentUpdatedEvent>(account),
-            deleted_handle: event::new_event_handle<StudentDeletedEvent>(account),
+        move_to(account, EscrowEventHolder {
+            created_events: event::new_event_handle<EscrowCreatedEvent>(account),
+            released_events: event::new_event_handle<ReleasedEvent>(account),
+            cancelled_events: event::new_event_handle<CancelledEvent>(account),
         });
     }
 
-    /// Add a new student to the caller's student book.
-    public entry fun add_student(account: &signer, name: string::String, age: u8) acquires StudentBook, StudentEvents {
-        let addr = signer::address_of(account);
-        let book = borrow_global_mut<StudentBook>(addr);
-        let student_id = book.next_id;
-        book.next_id = student_id + 1;
-        let student = Student {
-            id: student_id,
-            name: name.clone(),
-            age,
-            owner: addr,
-        };
-        vector::push_back<Student>(&mut book.students, student);
+    /// Create a new escrow. The depositor must be the signer sending the coins.
+    public entry fun create_escrow<CoinType>(
+        depositor: &signer,
+        beneficiary: address,
+        arbiter: address,
+        amount: u64,
+        coin: coin::Coin<CoinType>
+    ) acquires EscrowEventHolder {
+        let depositor_addr = signer::address_of(depositor);
+        assert!(amount > 0, error::invalid_argument(EAMOUNT_ZERO));
+        assert!(!exists<Escrow<CoinType>>(depositor_addr), error::already_exists(EESCROW_ALREADY_EXISTS));
+        let now = timestamp::now_seconds();
 
-        let events = borrow_global_mut<StudentEvents>(addr);
-        event::emit<StudentAddedEvent>(
-            &mut events.added_handle,
-            StudentAddedEvent {
-                owner: addr,
-                student_id,
-                name,
-            }
-        );
-    }
+        move_to<Escrow<CoinType>>(depositor, Escrow {
+            depositor: depositor_addr,
+            beneficiary,
+            arbiter,
+            amount,
+            status: STATUS_PENDING,
+            created_at: now,
+            coin,
+        });
 
-    /// Update a student's info (name, age) by id. Only owner can update their students.
-    public entry fun update_student(account: &signer, student_id: u64, new_name: string::String, new_age: u8) acquires StudentBook, StudentEvents {
-        let addr = signer::address_of(account);
-        let book = borrow_global_mut<StudentBook>(addr);
-        let (i, found) = find_student_idx(&book.students, student_id);
-        assert!(found, error::not_found(EStudentNotFound));
-        let student_ref = vector::borrow_mut<Student>(&mut book.students, i);
-        assert!(student_ref.owner == addr, error::permission_denied(ENotOwner));
-        student_ref.name = new_name.clone();
-        student_ref.age = new_age;
-
-        let events = borrow_global_mut<StudentEvents>(addr);
-        event::emit<StudentUpdatedEvent>(
-            &mut events.updated_handle,
-            StudentUpdatedEvent {
-                owner: addr,
-                student_id,
-                new_name,
-                new_age,
-            }
-        );
-    }
-
-    /// Remove a student by id. Only owner can remove their students.
-    public entry fun remove_student(account: &signer, student_id: u64) acquires StudentBook, StudentEvents {
-        let addr = signer::address_of(account);
-        let book = borrow_global_mut<StudentBook>(addr);
-        let (i, found) = find_student_idx(&book.students, student_id);
-        assert!(found, error::not_found(EStudentNotFound));
-        let student_ref = vector::borrow<Student>(&book.students, i);
-        assert!(student_ref.owner == addr, error::permission_denied(ENotOwner));
-        vector::swap_remove<Student>(&mut book.students, i);
-
-        let events = borrow_global_mut<StudentEvents>(addr);
-        event::emit<StudentDeletedEvent>(
-            &mut events.deleted_handle,
-            StudentDeletedEvent {
-                owner: addr,
-                student_id,
-            }
-        );
-    }
-
-    /// View: Get all students for an account
-    #[view]
-    public fun get_students(addr: address): vector<Student> acquires StudentBook {
-        if (!exists<StudentBook>(addr)) {
-            return vector::empty<Student>();
-        };
-        let book = borrow_global<StudentBook>(addr);
-        vector::copy<Student>(&book.students)
-    }
-
-    /// View: Get a student by id for an address
-    #[view]
-    public fun get_student(addr: address, student_id: u64): option::Option<Student> acquires StudentBook {
-        if (!exists<StudentBook>(addr)) {
-            return option::none<Student>();
-        };
-        let book = borrow_global<StudentBook>(addr);
-        let (i, found) = find_student_idx(&book.students, student_id);
-        if (!found) {
-            option::none<Student>()
-        } else {
-            let student = vector::borrow<Student>(&book.students, i);
-            option::some<Student>(copy *student)
+        if (exists<EscrowEventHolder>(depositor_addr)) {
+            let holder = borrow_global_mut<EscrowEventHolder>(depositor_addr);
+            event::emit(&mut holder.created_events, EscrowCreatedEvent {
+                escrow_id: depositor_addr,
+                depositor: depositor_addr,
+                beneficiary,
+                arbiter,
+                amount,
+                timestamp: now,
+            });
         }
     }
 
-    /// Helper: Find index of a student by id in a vector. Returns (index, found)
-    fun find_student_idx(students: &vector<Student>, id: u64): (u64, bool) {
-        let len = vector::length<Student>(students);
-        let mut i = 0;
-        while (i < len) {
-            let student = vector::borrow<Student>(students, i);
-            if (student.id == id) {
-                return (i, true);
-            };
-            i = i + 1;
-        };
-        (0, false)
+    /// Release funds to beneficiary. Only the arbiter can call this.
+    public entry fun release<CoinType>(
+        arbiter: &signer,
+        escrow_addr: address
+    ) acquires Escrow<CoinType>, EscrowEventHolder {
+        let arbiter_addr = signer::address_of(arbiter);
+        assert!(exists<Escrow<CoinType>>(escrow_addr), error::not_found(EESCROW_NOT_FOUND));
+        let escrow = borrow_global_mut<Escrow<CoinType>>(escrow_addr);
+        assert!(escrow.status == STATUS_PENDING, error::invalid_state(EESCROW_NOT_PENDING));
+        assert!(escrow.arbiter == arbiter_addr, error::permission_denied(ENOT_ARBITER));
+
+        let beneficiary = escrow.beneficiary;
+        let amount = escrow.amount;
+        let now = timestamp::now_seconds();
+        let coin = coin::withdraw<CoinType>(escrow_addr, amount);
+        coin::deposit<CoinType>(beneficiary, coin);
+
+        escrow.status = STATUS_RELEASED;
+
+        if (exists<EscrowEventHolder>(escrow_addr)) {
+            let holder = borrow_global_mut<EscrowEventHolder>(escrow_addr);
+            event::emit(&mut holder.released_events, ReleasedEvent {
+                escrow_id: escrow_addr,
+                released_to: beneficiary,
+                amount,
+                timestamp: now,
+            });
+        }
+    }
+
+    /// Cancel escrow and refund to depositor. Only the arbiter can call this.
+    public entry fun cancel<CoinType>(
+        arbiter: &signer,
+        escrow_addr: address
+    ) acquires Escrow<CoinType>, EscrowEventHolder {
+        let arbiter_addr = signer::address_of(arbiter);
+        assert!(exists<Escrow<CoinType>>(escrow_addr), error::not_found(EESCROW_NOT_FOUND));
+        let escrow = borrow_global_mut<Escrow<CoinType>>(escrow_addr);
+        assert!(escrow.status == STATUS_PENDING, error::invalid_state(EESCROW_NOT_PENDING));
+        assert!(escrow.arbiter == arbiter_addr, error::permission_denied(ENOT_ARBITER));
+
+        let depositor = escrow.depositor;
+        let amount = escrow.amount;
+        let now = timestamp::now_seconds();
+        let coin = coin::withdraw<CoinType>(escrow_addr, amount);
+        coin::deposit<CoinType>(depositor, coin);
+
+        escrow.status = STATUS_CANCELLED;
+
+        if (exists<EscrowEventHolder>(escrow_addr)) {
+            let holder = borrow_global_mut<EscrowEventHolder>(escrow_addr);
+            event::emit(&mut holder.cancelled_events, CancelledEvent {
+                escrow_id: escrow_addr,
+                refunded_to: depositor,
+                amount,
+                timestamp: now,
+            });
+        }
+    }
+
+    /// View escrow status and details
+    #[view]
+    public fun get_escrow<CoinType>(escrow_addr: address): (address, address, address, u64, u8, u64)
+        acquires Escrow<CoinType>
+    {
+        assert!(exists<Escrow<CoinType>>(escrow_addr), error::not_found(EESCROW_NOT_FOUND));
+        let escrow = borrow_global<Escrow<CoinType>>(escrow_addr);
+        (
+            escrow.depositor,
+            escrow.beneficiary,
+            escrow.arbiter,
+            escrow.amount,
+            escrow.status,
+            escrow.created_at
+        )
     }
 }

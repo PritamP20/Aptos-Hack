@@ -29,7 +29,6 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
       >
         <WalletProvider>
-
         {children}
         </WalletProvider>
       </body>

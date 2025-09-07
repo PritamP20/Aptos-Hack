@@ -31,11 +31,15 @@ The platform integrates a **Remix-like editor**, allowing developers to refine A
 ```
 my-turborepo/
 ├── apps/
-│ ├── web/ # Main Next.js app (AI contract platform UI)
-│ └── docs/ # Documentation site
+│ ├── Contract/ # My Custome Aptos Contract where i am Storing the credentials of the Contracts which the user deploy in devnet
+│ ├── frontend/ # Main Next.js app (AI contract platform UI)
+│ ├── GenAi/ # Gen Ai, Proper System prompted for creating a errorless smart contract
+│ ├── Volume/ # local volume for Docker instance (AI contract platform UI)
+│ └── RAG/ # RAG which is fined tuned with the aptos docs.
 ├── packages/
 │ ├── ui/ # Shared React UI components
 │ ├── eslint-config/ # Shared ESLint rules
+│ ├── docker/ # Docker file for the vsCode instance
 │ └── typescript-config/ # Shared TS configs
 ├── turbo.json # Turborepo config
 └── package.json

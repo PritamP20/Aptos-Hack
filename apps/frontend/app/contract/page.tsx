@@ -1,137 +1,44 @@
 "use client";
-import React, { useState, useEffect } from "react";
-import { Moon, Sun, Send, Bot, Wallet, User, LogOut, Rocket, Key, Copy, Eye, EyeOff, ExternalLink, Database } from "lucide-react";
+import React, { useState } from "react";
+import { Moon, Sun, Send, Bot, Wallet, User, LogOut } from "lucide-react";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
-import { AptosClient, HexString, Types } from "aptos";
+import { HexString } from "aptos";
+import axios from "axios";
+// import Staking from "../../components/ByteCode/Staking"
 
 interface Message {
   text: string;
   sender: string;
   timestamp: string;
   isError?: boolean;
-  deploymentData?: {
-    address: string;
-    privateKey: string;
-    explorerUrl: string;
-  };
-  showDeployButton?: boolean;
-}
-
-interface DeployedContract {
-  address: string;
-  privateKey: string;
-  explorerUrl: string;
-  timestamp: string;
-  contractName: string;
-  storedOnChain?: boolean;
 }
 
 const Page = () => {
-  const { account, connected, signAndSubmitTransaction } = useWallet();
+  // Access fields / functions from the adapter
+  const { account, connected, wallet, connect, disconnect, wallets: walletList } = useWallet();
+  const wallets = walletList || []; 
   
   const [isDark, setIsDark] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [showWalletOptions, setShowWalletOptions] = useState(false);
-  const [deployedContracts, setDeployedContracts] = useState<DeployedContract[]>([]);
-  const [showPrivateKeys, setShowPrivateKeys] = useState<{[key: string]: boolean}>({});
-  const [isDeploying, setIsDeploying] = useState(false);
-  const [isStoringKey, setIsStoringKey] = useState<string | null>(null);
-  const [aptosClient] = useState(new AptosClient("https://fullnode.devnet.aptoslabs.com/v1"));
 
   const bgClass = isDark ? "bg-black" : "bg-white";
   const textClass = isDark ? "text-white" : "text-black";
   const borderClass = isDark ? "border-gray-700" : "border-gray-300";
   const cardClass = isDark ? "bg-gray-900" : "bg-gray-50";
 
-  // Initialize key storage for user (call once when wallet connects)
-  const initializeKeyStorage = async () => {
-    if (!connected || !account) return;
-
+  const DeployContract = async () => {
     try {
-      const payload: Types.TransactionPayload = {
-        type: "entry_function_payload",
-        function: "0x1::KeyStorage::init_storage", // Replace with your contract address
-        type_arguments: [],
-        arguments: [],
-      };
-
-      await signAndSubmitTransaction(payload);
-      console.log("Key storage initialized");
+      const response = await axios.post("http://localhost:3002/deploy-contract")
+      console.log(response.data);
     } catch (error) {
-      console.log("Key storage might already be initialized:", error);
+      throw error;
     }
-  };
+  }
 
-  // Store private key on-chain using user's wallet
-  const storeKeyOnChain = async (privateKey: string, contractAddress: string) => {
-    if (!connected || !account) {
-      alert("Please connect your wallet first");
-      return false;
-    }
-
-    setIsStoringKey(contractAddress);
-
-    try {
-      // Convert private key to bytes
-      const keyBytes = Array.from(Buffer.from(privateKey, 'utf8'));
-
-      const payload: Types.TransactionPayload = {
-        type: "entry_function_payload",
-        function: "0x1::KeyStorage::add_key", // Replace with your contract address
-        type_arguments: [],
-        arguments: [keyBytes],
-      };
-
-      const result = await signAndSubmitTransaction(payload);
-      console.log("Key stored on-chain:", result);
-
-      // Update local state
-      setDeployedContracts(prev => 
-        prev.map(contract => 
-          contract.address === contractAddress 
-            ? { ...contract, storedOnChain: true }
-            : contract
-        )
-      );
-
-      return true;
-    } catch (error) {
-      console.error("Failed to store key on-chain:", error);
-      alert("Failed to store key on-chain: " + error.message);
-      return false;
-    } finally {
-      setIsStoringKey(null);
-    }
-  };
-
-  // Get stored key count for user
-  const getStoredKeyCount = async () => {
-    if (!connected || !account) return 0;
-
-    try {
-      const response = await aptosClient.view({
-        function: "0x1::KeyStorage::key_count", // Replace with your contract address
-        type_arguments: [],
-        arguments: [account.address.toString()],
-      });
-
-      return response[0] as number;
-    } catch (error) {
-      console.log("Error getting key count:", error);
-      return 0;
-    }
-  };
-
-  // Initialize storage when wallet connects
-  useEffect(() => {
-    if (connected && account) {
-      initializeKeyStorage();
-    }
-  }, [connected, account]);
-
-  // Generate contract with AI
+  // AI Response Function - Replace this with your actual AI integration
   const generateAIResponse = async (userMessage: string) => {
     const response = await fetch("http://localhost:3002/generate-full-suite", {
       method: "POST",
@@ -140,7 +47,7 @@ const Page = () => {
       },
       body: JSON.stringify({ 
         prompt: userMessage,
-        walletAddress: account?.address ? account.address.toString() : null
+        walletAddress: account?.address ? account.address.toString() : null // Convert to string safely
       }),
     });
 
@@ -150,133 +57,87 @@ const Page = () => {
     }
 
     const data = await response.json();
+    console.log("API response data:", data);
     return data.summary || data;
   };
 
-  // Deploy contract to blockchain
-  const deployContract = async (messageIndex?: number) => {
-    setIsDeploying(true);
-    
+  const handleWalletConnect = async (walletName: string) => {
     try {
-      const response = await fetch("http://localhost:3002/deploy-contract", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ maxGas: 20000 }),
-      });
-
-      const data = await response.json();
+      await connect(walletName);
+      setShowWalletOptions(false);
       
-      if (data.success) {
-        const newContract: DeployedContract = {
-          address: data.account.address,
-          privateKey: data.account.privateKey,
-          explorerUrl: data.explorerUrl,
-          timestamp: new Date().toISOString(),
-          contractName: "Generated Contract",
-          storedOnChain: false
-        };
-        
-        setDeployedContracts(prev => [...prev, newContract]);
-        
-        const deployMessage = {
-          text: `Contract deployed successfully!\n\nContract Address: ${data.account.address}\n\nPrivate key generated. You can store it securely on-chain using your connected wallet.`,
-          sender: "system",
-          timestamp: new Date().toISOString(),
-          deploymentData: {
-            address: data.account.address,
-            privateKey: data.account.privateKey,
-            explorerUrl: data.explorerUrl
-          }
-        };
-        
-        // Update the message that had the deploy button or add new message
-        if (messageIndex !== undefined) {
-          setMessages(prev => 
-            prev.map((msg, idx) => 
-              idx === messageIndex 
-                ? { ...msg, showDeployButton: false }
-                : msg
-            )
-          );
-        }
-        
-        setMessages(prev => [...prev, deployMessage]);
-        
-        return data;
-      } else {
-        throw new Error(data.error || "Deployment failed");
-      }
+      // Add a system message about wallet connection
+      const connectionMessage = {
+        text: `Wallet connected successfully! Address: ${account?.address || 'Loading...'}`,
+        sender: "system",
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, connectionMessage]);
     } catch (error) {
-      console.error("Deployment error:", error);
+      console.error("Failed to connect wallet:", error);
       const errorMessage = {
-        text: `Contract deployment failed: ${error.message}`,
+        text: "Failed to connect wallet. Please try again.",
         sender: "system",
         timestamp: new Date().toISOString(),
         isError: true,
       };
-      setMessages(prev => [...prev, errorMessage]);
-      return null;
-    } finally {
-      setIsDeploying(false);
+      setMessages((prev) => [...prev, errorMessage]);
+    }
+  };
+
+  const handleWalletDisconnect = async () => {
+    try {
+      await disconnect();
+      const disconnectionMessage = {
+        text: "Wallet disconnected successfully.",
+        sender: "system",
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, disconnectionMessage]);
+    } catch (error) {
+      console.error("Failed to disconnect wallet:", error);
     }
   };
 
   const handleSend = async () => {
     if (!inputMessage.trim() || isProcessing) return;
 
+    // Add user message
     const userMessage = {
       text: inputMessage,
       sender: "user",
       timestamp: new Date().toISOString(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
-    const currentInput = inputMessage;
+    setMessages((prev) => [...prev, userMessage]);
     setInputMessage("");
     setIsProcessing(true);
 
     try {
-      const aiResponseText = await generateAIResponse(currentInput);
-      
-      // Check if this looks like a contract generation request
-      const isContractRequest = currentInput.toLowerCase().includes('contract') || 
-                               currentInput.toLowerCase().includes('deploy') ||
-                               currentInput.toLowerCase().includes('create') ||
-                               currentInput.toLowerCase().includes('build');
-      
-      const aiMessage: Message = {
-        text: aiResponseText + (isContractRequest ? "\n\nContract files have been generated. Ready to deploy to Aptos devnet?" : ""),
+      // Generate AI response
+      const aiResponseText = await generateAIResponse(inputMessage);
+
+      const aiMessage = {
+        text: aiResponseText,
         sender: "ai",
         timestamp: new Date().toISOString(),
-        showDeployButton: isContractRequest
       };
-      
-      setMessages(prev => [...prev, aiMessage]);
+
+      setMessages((prev) => [...prev, aiMessage]);
     } catch (error) {
       console.error("Error generating AI response:", error);
+
       const errorMessage = {
         text: "Sorry, I encountered an error while processing your request. Please try again.",
         sender: "ai",
         timestamp: new Date().toISOString(),
         isError: true,
       };
-      setMessages(prev => [...prev, errorMessage]);
+
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsProcessing(false);
     }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
-
-  const togglePrivateKeyVisibility = (address: string) => {
-    setShowPrivateKeys(prev => ({
-      ...prev,
-      [address]: !prev[address]
-    }));
   };
 
   const formatTimestamp = (timestamp: string) => {
@@ -287,28 +148,44 @@ const Page = () => {
   };
 
   const formatAddress = (address?: HexString | string) => {
-    if (!address) return "";
-    const addrStr = typeof address === "string" ? address : address.toString();
-    return `${addrStr.slice(0, 6)}...${addrStr.slice(-4)}`;
+  if (!address) return "";
+  const addrStr = typeof address === "string" ? address : address.toString();
+  return `${addrStr.slice(0, 6)}...${addrStr.slice(-4)}`;
+};
+
+
+  const clearChat = () => {
+    setMessages([]);
   };
 
   return (
     <div className={`flex ${bgClass} ${textClass} min-h-screen`}>
       {/* Chat Interface */}
-      <div className={`w-1/4 ${cardClass} border-r ${borderClass} flex flex-col`}>
+      <div
+        className={`w-1/4 ${cardClass} border-r ${borderClass} flex flex-col`}
+      >
         {/* Header */}
-        <div className={`p-4 border-b ${borderClass} flex items-center justify-between`}>
-          <h1 className="text-xl font-bold">AI Contract Studio</h1>
+        <div
+          className={`p-4 border-b ${borderClass} flex items-center justify-between`}
+        >
+          <h1 className="text-xl font-bold">AI Chat</h1>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setMessages([])}
+              onClick={clearChat}
               className={`px-3 py-1 text-sm rounded-lg ${isDark ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"} transition-colors`}
             >
               Clear
             </button>
             <button
+              onClick={(e)=>DeployContract()}
+              className={`px-3 py-1 text-sm rounded-lg ${isDark ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"} transition-colors`}
+            >
+              Deploy
+            </button>
+            <button
               onClick={() => setIsDark(!isDark)}
               className={`p-2 rounded-lg ${isDark ? "hover:bg-gray-800" : "hover:bg-gray-100"} transition-colors`}
+              title={`Switch to ${isDark ? "light" : "dark"} mode`}
             >
               {isDark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
@@ -328,200 +205,116 @@ const Page = () => {
                   </p>
                 </div>
               </div>
+              <button
+                onClick={handleWalletDisconnect}
+                className={`p-2 rounded-lg ${isDark ? "hover:bg-gray-800 text-red-400" : "hover:bg-gray-100 text-red-500"} transition-colors`}
+                title="Disconnect Wallet"
+              >
+                <LogOut size={16} />
+              </button>
             </div>
           ) : (
-            <div className="text-center p-4">
-              <Wallet className="mx-auto mb-2 opacity-50" size={24} />
-              <p className="text-sm opacity-70 mb-3">Connect wallet to deploy and store contracts</p>
-              <button className={`px-4 py-2 rounded-lg border ${borderClass} hover:bg-gray-800 transition-colors`}>
-                Connect Wallet
+            <div className="relative">
+              <button
+                onClick={() => setShowWalletOptions(!showWalletOptions)}
+                className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg border ${borderClass} ${isDark ? "hover:bg-gray-800" : "hover:bg-gray-100"} transition-colors`}
+              >
+                <Wallet size={18} />
+                <span>Connect Wallet</span>
               </button>
+              
+              {showWalletOptions && (
+                <div className={`absolute top-full left-0 right-0 mt-2 ${cardClass} border ${borderClass} rounded-lg shadow-lg z-10`}>
+                  <div className="p-2">
+                    <p className="text-sm font-medium mb-2 px-2">Choose Wallet:</p>
+                    {wallets && Array.isArray(wallets) && wallets.length > 0 ? (
+                      wallets.map((wallet) => (
+                        <button
+                          key={wallet.name}
+                          onClick={() => handleWalletConnect(wallet.name)}
+                          className={`w-full flex items-center gap-2 p-2 rounded-lg ${isDark ? "hover:bg-gray-700" : "hover:bg-gray-200"} transition-colors text-left`}
+                        >
+                          {wallet.icon && (
+                            <img 
+                              src={wallet.icon} 
+                              alt={wallet.name}
+                              className="w-5 h-5"
+                            />
+                          )}
+                          <span className="text-sm">{wallet.name}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-500 p-2">No wallets detected</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Deployed Contracts Section */}
-        {deployedContracts.length > 0 && (
-          <div className={`p-4 border-b ${borderClass}`}>
-            <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-              <Database size={14} />
-              Your Contracts ({deployedContracts.length})
-            </h3>
-            <div className="space-y-3 max-h-60 overflow-y-auto">
-              {deployedContracts.map((contract) => (
-                <div key={contract.address} className={`p-3 rounded-lg ${isDark ? "bg-gray-800" : "bg-gray-100"}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-sm">{formatAddress(contract.address)}</span>
-                    <div className="flex items-center gap-1">
-                      <a 
-                        href={contract.explorerUrl} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-blue-500 hover:text-blue-400 p-1"
-                        title="View on Explorer"
-                      >
-                        <ExternalLink size={12} />
-                      </a>
-                      {contract.storedOnChain && (
-                        <div className="text-green-500 p-1" title="Stored on-chain">
-                          <Database size={12} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {/* Private Key Section */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="opacity-70">Private Key:</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => togglePrivateKeyVisibility(contract.address)}
-                          className="p-1 hover:bg-gray-600 rounded"
-                          title={showPrivateKeys[contract.address] ? "Hide" : "Show"}
-                        >
-                          {showPrivateKeys[contract.address] ? <EyeOff size={12} /> : <Eye size={12} />}
-                        </button>
-                        <button
-                          onClick={() => copyToClipboard(contract.privateKey)}
-                          className="p-1 hover:bg-gray-600 rounded"
-                          title="Copy"
-                        >
-                          <Copy size={12} />
-                        </button>
-                      </div>
-                    </div>
-                    
-                    <div className="font-mono text-xs p-2 bg-black/20 rounded break-all">
-                      {showPrivateKeys[contract.address] 
-                        ? contract.privateKey 
-                        : '••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••'}
-                    </div>
-                    
-                    {/* Store Key Button */}
-                    {connected && !contract.storedOnChain && (
-                      <button
-                        onClick={() => storeKeyOnChain(contract.privateKey, contract.address)}
-                        disabled={isStoringKey === contract.address}
-                        className={`w-full py-1 px-2 text-xs rounded-lg border transition-colors ${
-                          isStoringKey === contract.address
-                            ? "bg-gray-600 text-gray-300 cursor-not-allowed"
-                            : "border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white"
-                        }`}
-                      >
-                        {isStoringKey === contract.address ? "Storing..." : "Store Key On-Chain"}
-                      </button>
-                    )}
-                    
-                    {contract.storedOnChain && (
-                      <div className="text-xs text-green-500 text-center">
-                        ✓ Stored securely on-chain
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Chat Messages */}
-        <div className="flex-1 overflow-y-scroll p-4 flex flex-col gap-4">
-          {messages.length > 0 ? (
+        <div className="flex-1 overflow-y-scroll p-4 flex flex-col gap-3">
+          {messages && Array.isArray(messages) && messages.length > 0 ? (
             messages.map((msg, idx) => (
-              <div key={idx} className="flex flex-col gap-2">
+              <div key={idx} className="flex flex-col gap-1">
                 <div
-                  className={`p-3 rounded-lg max-w-[90%] ${
+                  className={`p-3 rounded-lg max-w-[85%] ${
                     msg.sender === "user"
-                      ? "bg-blue-500 text-white self-end"
+                      ? "bg-blue-500 text-white self-end rounded-br-sm"
                       : msg.sender === "system"
                         ? msg.isError
-                          ? "bg-red-500 text-white self-center"
-                          : "bg-green-500 text-white self-center"
+                          ? "bg-red-500 text-white self-center rounded-lg"
+                          : "bg-green-500 text-white self-center rounded-lg"
                         : msg.isError
-                          ? "bg-red-500 text-white self-start"
-                          : `${isDark ? "bg-gray-700" : "bg-gray-200"} self-start`
+                          ? "bg-red-500 text-white self-start rounded-bl-sm"
+                          : `${isDark ? "bg-gray-700" : "bg-gray-200"} ${isDark ? "text-white" : "text-gray-800"} self-start rounded-bl-sm`
                   }`}
                 >
                   {msg.sender === "ai" && !msg.isError && (
-                    <div className="flex items-center gap-1 mb-2 opacity-70">
+                    <div className="flex items-center gap-1 mb-1 opacity-70">
                       <Bot size={12} />
                       <span className="text-xs">AI Assistant</span>
                     </div>
                   )}
-                  
+                  {msg.sender === "system" && (
+                    <div className="flex items-center gap-1 mb-1 opacity-70">
+                      <Wallet size={12} />
+                      <span className="text-xs">System</span>
+                    </div>
+                  )}
                   <div className="whitespace-pre-wrap text-sm">{msg.text}</div>
-                  
-                  {/* Deploy Button */}
-                  {msg.showDeployButton && (
-                    <div className="mt-3 pt-3 border-t border-white/20">
-                      <button
-                        onClick={() => deployContract(idx)}
-                        disabled={isDeploying}
-                        className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
-                          isDeploying
-                            ? "bg-gray-600 text-gray-300 cursor-not-allowed"
-                            : "bg-blue-600 hover:bg-blue-700 text-white"
-                        }`}
-                      >
-                        {isDeploying ? (
-                          <div className="flex items-center justify-center gap-2">
-                            <Rocket size={16} className="animate-pulse" />
-                            <span>Deploying...</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center gap-2">
-                            <Rocket size={16} />
-                            <span>Deploy to Aptos Devnet</span>
-                          </div>
-                        )}
-                      </button>
-                    </div>
-                  )}
-                  
-                  {/* Deployment Results */}
-                  {msg.deploymentData && (
-                    <div className="mt-3 pt-3 border-t border-white/20">
-                      <div className="text-xs space-y-2">
-                        <div>
-                          <span className="opacity-70">Contract: </span>
-                          <span className="font-mono">{formatAddress(msg.deploymentData.address)}</span>
-                        </div>
-                        
-                        {connected && (
-                          <button
-                            onClick={() => storeKeyOnChain(msg.deploymentData.privateKey, msg.deploymentData.address)}
-                            className="w-full py-1 px-2 text-xs rounded border-white/30 border hover:bg-white/10 transition-colors"
-                          >
-                            Store Private Key On-Chain
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
-                
-                <span className="text-xs opacity-50 px-1 self-start">
+                <span
+                  className={`text-xs opacity-50 ${
+                    msg.sender === "user" ? "self-end" : 
+                    msg.sender === "system" ? "self-center" : "self-start"
+                  } px-1`}
+                >
                   {formatTimestamp(msg.timestamp)}
                 </span>
               </div>
             ))
           ) : (
-            <div className="text-center mt-20">
+            <div
+              className={`text-sm ${isDark ? "text-gray-400" : "text-gray-600"} self-center mt-16 text-center`}
+            >
               <Bot size={48} className="mx-auto mb-4 opacity-50" />
-              <p className="text-lg mb-2">AI Contract Studio</p>
-              <p className="text-sm opacity-70 mb-4">Generate, deploy, and manage smart contracts</p>
-              <div className="text-xs opacity-50 space-y-1">
-                <p>Try: "Create a simple token contract"</p>
-                <p>Or: "Build an NFT marketplace"</p>
-              </div>
+              <p className="text-lg mb-2">Welcome to AI Chat</p>
+              <p>Connect your wallet and start a conversation</p>
+              {!connected && (
+                <p className="text-xs mt-2 opacity-70">
+                  Wallet connection enables enhanced features
+                </p>
+              )}
             </div>
           )}
 
-          {(isProcessing || isDeploying) && (
-            <div className="flex items-center gap-2 text-blue-500 text-sm">
+          {isProcessing && (
+            <div className="flex items-center gap-2 text-blue-500 text-sm self-start">
               <Bot size={16} className="animate-pulse" />
-              <span>{isDeploying ? "Deploying to blockchain..." : "AI is working..."}</span>
+              <span>AI is thinking...</span>
             </div>
           )}
         </div>
@@ -532,22 +325,28 @@ const Page = () => {
             <input
               type="text"
               className={`flex-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 ${bgClass} ${textClass} ${borderClass}`}
-              placeholder="Describe your smart contract..."
+              placeholder="Type your message..."
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              onKeyDown={(e) =>
+                e.key === "Enter" && !isProcessing && handleSend()
+              }
               disabled={isProcessing}
             />
             <button
               onClick={handleSend}
               disabled={isProcessing || !inputMessage.trim()}
-              className={`px-4 py-2 rounded-lg transition-colors ${
+              className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-1 ${
                 isProcessing || !inputMessage.trim()
-                  ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+                  ? "bg-gray-400 text-gray-200 cursor-not-allowed"
                   : "bg-blue-500 text-white hover:bg-blue-600"
               }`}
             >
-              <Send size={16} />
+              {isProcessing ? (
+                <Bot size={16} className="animate-pulse" />
+              ) : (
+                <Send size={16} />
+              )}
             </button>
           </div>
         </div>

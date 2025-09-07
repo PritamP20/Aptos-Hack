@@ -1,129 +1,221 @@
 address 0x1 {
-    use std::signer;
-    use std::vector;
-    use std::error;
-    use std::option::{Self, Option};
+    module Staking {
 
-    /// Error codes
-    const ERR_NOT_ESCROW_OWNER: u64 = 1;
-    const ERR_ALREADY_FUNDED: u64 = 2;
-    const ERR_NOT_FUNDED: u64 = 3;
-    const ERR_NOT_RECIPIENT: u64 = 4;
-    const ERR_ESCROW_NOT_EXISTS: u64 = 5;
+        use std::signer;
+        use std::vector;
+        use std::errors;
+        use std::event;
 
-    /// Resource representing an Escrow agreement between a sender and a recipient.
-    /// Holds the deposited value and the parties involved.
-    struct Escrow has key {
-        sender: address,
-        recipient: address,
-        amount: u64,
-        funded: bool,
-        released: bool,
-    }
+        /// Error codes
+        const ENOT_STAKED: u64 = 1;
+        const EINSUFFICIENT_BALANCE: u64 = 2;
+        const ENOT_AUTHORIZED: u64 = 3;
+        const EZERO_AMOUNT: u64 = 4;
 
-    /// Stores all escrows created by each account.
-    struct Escrows has key {
-        list: vector<Escrow>,
-    }
-
-    /// Initializes escrow storage for the signer account if not exists already.
-    fun init_escrows(account: &signer) {
-        let addr = signer::address_of(account);
-        if (!exists<Escrows>(addr)) {
-            move_to(account, Escrows { list: vector::empty<Escrow>() });
+        /// Event emitted when a user stakes tokens
+        struct StakedEvent has copy, drop, store {
+            staker: address,
+            amount: u64,
         }
-    }
 
-    /// Creates a new escrow agreement.
-    /// The sender must be the signer creating it.
-    /// Initially, it is not funded.
-    public fun create_escrow(account: &signer, recipient: address, amount: u64) {
-        let sender = signer::address_of(account);
-        // Initialize Escrows resource if not present
-        if (!exists<Escrows>(sender)) {
-            move_to(account, Escrows { list: vector::empty<Escrow>() });
+        /// Event emitted when a user unstakes tokens
+        struct UnstakedEvent has copy, drop, store {
+            staker: address,
+            amount: u64,
         }
-        let escrows_ref = borrow_global_mut<Escrows>(sender);
-        // Create new escrow
-        let escrow = Escrow {
-            sender,
-            recipient,
-            amount,
-            funded: false,
-            released: false,
-        };
-        vector::push_back(&mut escrows_ref.list, escrow);
-    }
 
-    /// Fund an escrow by the sender.
-    /// The escrow must not be already funded.
-    public fun fund_escrow(account: &signer, index: u64) acquires Escrows {
-        let sender = signer::address_of(account);
-        assert!(exists<Escrows>(sender), error::not_found(ERR_ESCROW_NOT_EXISTS));
-        let escrows_ref = borrow_global_mut<Escrows>(sender);
-        let len = vector::length(&escrows_ref.list);
-        assert!(index < len, error::invalid_argument(ERR_ESCROW_NOT_EXISTS));
-        let escrow_ref = &mut vector::borrow_mut(&mut escrows_ref.list, index);
-        // Only sender can fund
-        assert!(escrow_ref.sender == sender, error::permission_denied(ERR_NOT_ESCROW_OWNER));
-        // Check not funded yet
-        assert!(!escrow_ref.funded, error::already_exists(ERR_ALREADY_FUNDED));
-        // Here would be the logic to deduct tokens from sender and hold in escrow
-        // Since we do not handle tokens here, we just mark funded = true
-        escrow_ref.funded = true;
-    }
-
-    /// Release funds to recipient.
-    /// Only sender can release and escrow must be funded and not yet released.
-    public fun release_escrow(account: &signer, sender_addr: address, index: u64) acquires Escrows {
-        let caller = signer::address_of(account);
-        // Only sender can release
-        assert!(caller == sender_addr, error::permission_denied(ERR_NOT_ESCROW_OWNER));
-        assert!(exists<Escrows>(sender_addr), error::not_found(ERR_ESCROW_NOT_EXISTS));
-        let escrows_ref = borrow_global_mut<Escrows>(sender_addr);
-        let len = vector::length(&escrows_ref.list);
-        assert!(index < len, error::invalid_argument(ERR_ESCROW_NOT_EXISTS));
-        let escrow_ref = &mut vector::borrow_mut(&mut escrows_ref.list, index);
-        assert!(escrow_ref.funded, error::invalid_state(ERR_NOT_FUNDED));
-        assert!(!escrow_ref.released, error::invalid_state(ERR_ALREADY_FUNDED));
-        escrow_ref.released = true;
-        // Here would be the logic to transfer tokens to recipient
-        // Since token handling is out of scope, this is a placeholder
-    }
-
-    /// Cancel escrow and refund sender.
-    /// Can only be done by sender before funding.
-    public fun cancel_escrow(account: &signer, index: u64) acquires Escrows {
-        let sender = signer::address_of(account);
-        assert!(exists<Escrows>(sender), error::not_found(ERR_ESCROW_NOT_EXISTS));
-        let escrows_ref = borrow_global_mut<Escrows>(sender);
-        let len = vector::length(&escrows_ref.list);
-        assert!(index < len, error::invalid_argument(ERR_ESCROW_NOT_EXISTS));
-        let escrow_ref = &vector::borrow(&escrows_ref.list, index);
-        assert!(escrow_ref.sender == sender, error::permission_denied(ERR_NOT_ESCROW_OWNER));
-        assert!(!escrow_ref.funded, error::invalid_state(ERR_ALREADY_FUNDED));
-        // Remove escrow by swapping with last and popping
-        vector::swap_remove(&mut escrows_ref.list, index);
-    }
-
-    /// Gets the number of escrows for the signer.
-    public fun get_escrow_count(account: &signer): u64 acquires Escrows {
-        let addr = signer::address_of(account);
-        if (!exists<Escrows>(addr)) {
-            return 0;
+        /// Event emitted when a user claims rewards
+        struct RewardPaidEvent has copy, drop, store {
+            staker: address,
+            amount: u64,
         }
-        let escrows_ref = borrow_global<Escrows>(addr);
-        vector::length(&escrows_ref.list)
-    }
 
-    /// Gets basic info about an escrow by index.
-    public fun get_escrow(account: &signer, index: u64): (address, address, u64, bool, bool) acquires Escrows {
-        let addr = signer::address_of(account);
-        assert!(exists<Escrows>(addr), error::not_found(ERR_ESCROW_NOT_EXISTS));
-        let escrows_ref = borrow_global<Escrows>(addr);
-        let len = vector::length(&escrows_ref.list);
-        assert!(index < len, error::invalid_argument(ERR_ESCROW_NOT_EXISTS));
-        let escrow_ref = &vector::borrow(&escrows_ref.list, index);
-        (escrow_ref.sender, escrow_ref.recipient, escrow_ref.amount, escrow_ref.funded, escrow_ref.released)
+        /// Resource storing all staking-related state
+        struct StakingState has key {
+            total_staked: u64,
+            reward_rate: u64, // reward tokens per staked token per epoch (or unit of time)
+            last_update_time: u64,
+            reward_per_token_stored: u64,
+            /// Mapping from user address to UserInfo
+            user_info: vector<(address, UserInfo)>,
+            staked_event_handle: event::EventHandle<StakedEvent>,
+            unstaked_event_handle: event::EventHandle<UnstakedEvent>,
+            reward_paid_event_handle: event::EventHandle<RewardPaidEvent>,
+        }
+
+        /// Struct to store individual user staking info
+        struct UserInfo has copy, drop, store {
+            amount: u64,
+            reward_debt: u64,
+            rewards: u64,
+            last_stake_time: u64,
+        }
+
+        /// Initializes staking state under the deployer (owner) account
+        public fun initialize(owner: &signer, reward_rate: u64) {
+            assert!(!exists<StakingState>(signer::address_of(owner)), errors::already_exists(0));
+            let state = StakingState {
+                total_staked: 0,
+                reward_rate,
+                last_update_time: 0,
+                reward_per_token_stored: 0,
+                user_info: vector::empty(),
+                staked_event_handle: event::new_event_handle<StakedEvent>(owner),
+                unstaked_event_handle: event::new_event_handle<UnstakedEvent>(owner),
+                reward_paid_event_handle: event::new_event_handle<RewardPaidEvent>(owner),
+            };
+            move_to(owner, state);
+        }
+
+        /// Internal helper: Find user info by address, returns index or none
+        fun find_user_index(user_info: &vector<(address, UserInfo)>, user: address): option::Option<u64> {
+            let length = vector::length(user_info);
+            let mut i = 0;
+            while (i < length) {
+                let (addr, _) = *vector::borrow(user_info, i);
+                if (addr == user) {
+                    return option::some(i);
+                };
+                i = i + 1;
+            };
+            option::none()
+        }
+
+        /// Internal helper: Update rewards accounting for a user
+        fun update_rewards(state: &mut StakingState, user_addr: address) {
+            let current_time = timestamp();
+            let time_diff = current_time - state.last_update_time;
+            if (state.total_staked > 0 && time_diff > 0) {
+                // Calculate new reward per token
+                let additional_reward_per_token = (time_diff * state.reward_rate * 1_000_000) / state.total_staked;
+                state.reward_per_token_stored = state.reward_per_token_stored + additional_reward_per_token;
+            };
+            state.last_update_time = current_time;
+
+            // Update user's rewards
+            let user_index_opt = find_user_index(&state.user_info, user_addr);
+            if (option::is_some(&user_index_opt)) {
+                let idx = option::extract(user_index_opt);
+                let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
+                let earned = (user_info.amount * (state.reward_per_token_stored - user_info.reward_debt)) / 1_000_000;
+                user_info.rewards = user_info.rewards + earned;
+                user_info.reward_debt = state.reward_per_token_stored;
+            }
+        }
+
+        /// Public entry function to stake tokens
+        /// Note: This example does not handle token transfer; assumes tokens are managed off-chain or externally.
+        public entry fun stake(user: &signer, amount: u64) acquires StakingState {
+            assert!(amount > 0, errors::invalid_argument(EZERO_AMOUNT));
+            let addr = signer::address_of(user);
+            let state = borrow_global_mut<StakingState>(0x1);
+
+            // Update rewards for this user before changing amount
+            update_rewards(state, addr);
+
+            let user_index_opt = find_user_index(&state.user_info, addr);
+            if (option::is_some(&user_index_opt)) {
+                let idx = option::extract(user_index_opt);
+                let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
+                user_info.amount = user_info.amount + amount;
+                user_info.reward_debt = state.reward_per_token_stored;
+                user_info.last_stake_time = timestamp();
+            } else {
+                let new_user_info = UserInfo {
+                    amount,
+                    reward_debt: state.reward_per_token_stored,
+                    rewards: 0,
+                    last_stake_time: timestamp(),
+                };
+                vector::push_back(&mut state.user_info, (addr, new_user_info));
+            }
+
+            state.total_staked = state.total_staked + amount;
+
+            // Emit stake event
+            event::emit_event(&mut state.staked_event_handle, StakedEvent { staker: addr, amount });
+
+        }
+
+        /// Public entry function to unstake tokens
+        public entry fun unstake(user: &signer, amount: u64) acquires StakingState {
+            assert!(amount > 0, errors::invalid_argument(EZERO_AMOUNT));
+            let addr = signer::address_of(user);
+            let state = borrow_global_mut<StakingState>(0x1);
+
+            // Update rewards for this user before changing amount
+            update_rewards(state, addr);
+
+            let user_index_opt = find_user_index(&state.user_info, addr);
+            assert!(option::is_some(&user_index_opt), errors::not_found(ENOT_STAKED));
+            let idx = option::extract(user_index_opt);
+            let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
+            assert!(user_info.amount >= amount, errors::invalid_argument(EINSUFFICIENT_BALANCE));
+
+            user_info.amount = user_info.amount - amount;
+            user_info.reward_debt = state.reward_per_token_stored;
+
+            state.total_staked = state.total_staked - amount;
+
+            // If user fully unstaked, remove from vector (simple swap remove)
+            if (user_info.amount == 0) {
+                let length = vector::length(&state.user_info);
+                if (idx < length - 1) {
+                    let last = vector::pop_back(&mut state.user_info);
+                    vector::borrow_mut(&mut state.user_info, idx).copy_from(&last);
+                } else {
+                    vector::pop_back(&mut state.user_info);
+                }
+            }
+
+            // Emit unstake event
+            event::emit_event(&mut state.unstaked_event_handle, UnstakedEvent { staker: addr, amount });
+        }
+
+        /// Public entry function to claim accumulated rewards
+        public entry fun claim_rewards(user: &signer) acquires StakingState {
+            let addr = signer::address_of(user);
+            let state = borrow_global_mut<StakingState>(0x1);
+
+            update_rewards(state, addr);
+
+            let user_index_opt = find_user_index(&state.user_info, addr);
+            assert!(option::is_some(&user_index_opt), errors::not_found(ENOT_STAKED));
+            let idx = option::extract(user_index_opt);
+            let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
+
+            let reward = user_info.rewards;
+            assert!(reward > 0, errors::invalid_state(0));
+
+            user_info.rewards = 0;
+
+            // Emit reward paid event
+            event::emit_event(&mut state.reward_paid_event_handle, RewardPaidEvent { staker: addr, amount: reward });
+
+            // Note: Actual token transfer of rewards should be implemented here as needed.
+        }
+
+        /// View function to get a user's staked amount and pending rewards
+        public fun get_user_info(state: &StakingState, user: address): option::Option<(u64, u64)> {
+            let user_index_opt = find_user_index(&state.user_info, user);
+            if (option::is_some(&user_index_opt)) {
+                let idx = option::extract(user_index_opt);
+                let (_, user_info) = *vector::borrow(&state.user_info, idx);
+                Some((user_info.amount, user_info.rewards))
+            } else {
+                option::none()
+            }
+        }
+
+        /// View function to get total staked tokens
+        public fun get_total_staked(state: &StakingState): u64 {
+            state.total_staked
+        }
+
+        /// Internal helper to get current timestamp (mock-up, may differ on actual chain)
+        fun timestamp(): u64 {
+            // Placeholder for actual timestamp retrieval
+            0
+        }
     }
 }

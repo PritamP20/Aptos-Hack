@@ -1,160 +1,226 @@
-module 0x1::escrow_tests {
-    use std::signer;
-    use std::vector;
-    use std::error;
-    use std::option::Option;
-    use 0x1::escrow;
+address 0x1 {
+    module StakingTest {
+        use std::signer;
+        use std::vector;
+        use std::errors;
+        use std::option;
+        use std::event;
+        use 0x1::Staking;
 
-    /// Helper function: create a new escrow and return the index (last in list)
-    fun create_and_get_index(account: &signer, recipient: address, amount: u64): u64 {
-        escrow::create_escrow(account, recipient, amount);
-        escrow::get_escrow_count(account) - 1
-    }
+        /// Helper to initialize the staking contract with a given reward rate
+        fun setup(owner: &signer, reward_rate: u64) {
+            Staking::initialize(owner, reward_rate);
+        }
 
-    #[test]
-    fun test_init_escrows_and_create() {
-        let sender = signer::spec_signer(0);
-        let recipient = signer::address_of(&signer::spec_signer(1));
-        // Init escrows
-        escrow::init_escrows(&sender);
-        let count = escrow::get_escrow_count(&sender);
-        assert!(count == 0, 1);
+        /// Helper to get user info from StakingState resource
+        fun get_user_info(addr: address): option::Option<(u64, u64)> {
+            let state = borrow_global<Staking::StakingState>(0x1);
+            Staking::get_user_info(&state, addr)
+        }
 
-        // Create escrow
-        escrow::create_escrow(&sender, recipient, 100);
-        let count = escrow::get_escrow_count(&sender);
-        assert!(count == 1, 2);
+        /// Helper to get total staked tokens
+        fun get_total_staked(): u64 {
+            let state = borrow_global<Staking::StakingState>(0x1);
+            Staking::get_total_staked(&state)
+        }
 
-        let escrow_info = escrow::get_escrow(&sender, 0);
-        assert!(escrow_info.0 == signer::address_of(&sender), 3);
-        assert!(escrow_info.1 == recipient, 4);
-        assert!(escrow_info.2 == 100, 5);
-        assert!(!escrow_info.3, 6); // funded false
-        assert!(!escrow_info.4, 7); // released false
-    }
+        /// Test that initialize sets up the contract correctly and prevents double init
+        #[test]
+        fun test_initialize_and_double_init() {
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
+            let state = borrow_global<Staking::StakingState>(0x1);
+            assert!(state.reward_rate == 10, 1);
+            assert!(state.total_staked == 0, 2);
 
-    #[test]
-    fun test_fund_escrow_success() {
-        let sender = signer::spec_signer(10);
-        let recipient = signer::address_of(&signer::spec_signer(11));
-        let index = create_and_get_index(&sender, recipient, 50);
+            // Attempt to initialize again should abort
+            let res = std::debug::catch_abort(|| Staking::initialize(&owner, 20));
+            assert!(res.is_abort(), 3);
+        }
 
-        escrow::fund_escrow(&sender, index);
-        let escrow_info = escrow::get_escrow(&sender, index);
-        assert!(escrow_info.3, 8); // funded true
-        assert!(!escrow_info.4, 9); // released false
-    }
+        /// Test staking with valid amount updates state and emits event
+        #[test]
+        fun test_stake_basic() {
+            let user = signer::spec_signer(0x2);
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 100);
 
-    #[test]
-    fun test_fund_escrow_already_funded_fail() {
-        let sender = signer::spec_signer(20);
-        let recipient = signer::address_of(&signer::spec_signer(21));
-        let index = create_and_get_index(&sender, recipient, 75);
+            Staking::stake(&user, 50);
+            let info_opt = get_user_info(signer::address_of(&user));
+            assert!(option::is_some(&info_opt), 1);
+            let (staked_amount, rewards) = option::extract(info_opt);
+            assert!(staked_amount == 50, 2);
+            assert!(rewards == 0, 3);
 
-        escrow::fund_escrow(&sender, index);
-        // Attempt to fund again must abort with ERR_ALREADY_FUNDED (2)
-        let res = error::catch_abort_code(|| escrow::fund_escrow(&sender, index));
-        assert!(res == escrow::ERR_ALREADY_FUNDED, 10);
-    }
+            let total = get_total_staked();
+            assert!(total == 50, 4);
+        }
 
-    #[test]
-    fun test_fund_escrow_not_owner_fail() {
-        let sender = signer::spec_signer(30);
-        let recipient = signer::address_of(&signer::spec_signer(31));
-        let index = create_and_get_index(&sender, recipient, 80);
+        /// Test staking with zero amount aborts with EZERO_AMOUNT
+        #[test]
+        fun test_stake_zero_amount_abort() {
+            let user = signer::spec_signer(0x3);
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
 
-        let other = signer::spec_signer(32);
-        // Other account tries to fund escrow, should abort with ERR_NOT_ESCROW_OWNER (1)
-        let res = error::catch_abort_code(|| escrow::fund_escrow(&other, index));
-        assert!(res == escrow::ERR_NOT_ESCROW_OWNER, 11);
-    }
+            let res = std::debug::catch_abort_code(|| Staking::stake(&user, 0));
+            assert!(res == errors::invalid_argument(Staking::EZERO_AMOUNT), 1);
+        }
 
-    #[test]
-    fun test_release_escrow_success() {
-        let sender = signer::spec_signer(40);
-        let recipient = signer::address_of(&signer::spec_signer(41));
-        let index = create_and_get_index(&sender, recipient, 150);
+        /// Test unstaking without staking aborts with ENOT_STAKED
+        #[test]
+        fun test_unstake_without_stake_abort() {
+            let user = signer::spec_signer(0x4);
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
 
-        escrow::fund_escrow(&sender, index);
-        escrow::release_escrow(&sender, signer::address_of(&sender), index);
+            let res = std::debug::catch_abort_code(|| Staking::unstake(&user, 10));
+            assert!(res == errors::not_found(Staking::ENOT_STAKED), 1);
+        }
 
-        let escrow_info = escrow::get_escrow(&sender, index);
-        assert!(escrow_info.4, 12); // released true
-    }
+        /// Test unstaking more than staked amount aborts with EINSUFFICIENT_BALANCE
+        #[test]
+        fun test_unstake_more_than_staked_abort() {
+            let user = signer::spec_signer(0x5);
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
 
-    #[test]
-    fun test_release_escrow_not_funded_fail() {
-        let sender = signer::spec_signer(50);
-        let recipient = signer::address_of(&signer::spec_signer(51));
-        let index = create_and_get_index(&sender, recipient, 100);
+            Staking::stake(&user, 30);
+            let res = std::debug::catch_abort_code(|| Staking::unstake(&user, 50));
+            assert!(res == errors::invalid_argument(Staking::EINSUFFICIENT_BALANCE), 1);
+        }
 
-        // Attempt release before funding should abort with ERR_NOT_FUNDED (3)
-        let res = error::catch_abort_code(|| escrow::release_escrow(&sender, signer::address_of(&sender), index));
-        assert!(res == escrow::ERR_NOT_FUNDED, 13);
-    }
+        /// Test successful unstake decreases staked amount and total_staked, and removes user if fully unstaked
+        #[test]
+        fun test_unstake_partial_and_full() {
+            let user = signer::spec_signer(0x6);
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
 
-    #[test]
-    fun test_release_escrow_not_owner_fail() {
-        let sender = signer::spec_signer(60);
-        let recipient = signer::address_of(&signer::spec_signer(61));
-        let index = create_and_get_index(&sender, recipient, 100);
-        escrow::fund_escrow(&sender, index);
+            Staking::stake(&user, 40);
 
-        let other = signer::spec_signer(62);
-        // Other account attempts to release - should abort with ERR_NOT_ESCROW_OWNER (1)
-        let res = error::catch_abort_code(|| escrow::release_escrow(&other, signer::address_of(&sender), index));
-        assert!(res == escrow::ERR_NOT_ESCROW_OWNER, 14);
-    }
+            // Partial unstake
+            Staking::unstake(&user, 15);
+            let info_opt = get_user_info(signer::address_of(&user));
+            assert!(option::is_some(&info_opt), 1);
+            let (staked_amount, _) = option::extract(info_opt);
+            assert!(staked_amount == 25, 2);
 
-    #[test]
-    fun test_cancel_escrow_success() {
-        let sender = signer::spec_signer(70);
-        let recipient = signer::address_of(&signer::spec_signer(71));
-        let index = create_and_get_index(&sender, recipient, 200);
+            let total = get_total_staked();
+            assert!(total == 25, 3);
 
-        // Cancel before funding
-        escrow::cancel_escrow(&sender, index);
-        let count = escrow::get_escrow_count(&sender);
-        assert!(count == 0, 15);
-    }
+            // Full unstake
+            Staking::unstake(&user, 25);
+            let info_opt2 = get_user_info(signer::address_of(&user));
+            assert!(option::is_none(&info_opt2), 4);
 
-    #[test]
-    fun test_cancel_escrow_funded_fail() {
-        let sender = signer::spec_signer(80);
-        let recipient = signer::address_of(&signer::spec_signer(81));
-        let index = create_and_get_index(&sender, recipient, 300);
-        escrow::fund_escrow(&sender, index);
+            let total2 = get_total_staked();
+            assert!(total2 == 0, 5);
+        }
 
-        // Cancel after funding should abort with ERR_ALREADY_FUNDED (2)
-        let res = error::catch_abort_code(|| escrow::cancel_escrow(&sender, index));
-        assert!(res == escrow::ERR_ALREADY_FUNDED, 16);
-    }
+        /// Test claiming rewards without staking aborts with ENOT_STAKED
+        #[test]
+        fun test_claim_rewards_without_stake_abort() {
+            let user = signer::spec_signer(0x7);
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
 
-    #[test]
-    fun test_cancel_escrow_not_owner_fail() {
-        let sender = signer::spec_signer(90);
-        let recipient = signer::address_of(&signer::spec_signer(91));
-        let index = create_and_get_index(&sender, recipient, 400);
+            let res = std::debug::catch_abort_code(|| Staking::claim_rewards(&user));
+            assert!(res == errors::not_found(Staking::ENOT_STAKED), 1);
+        }
 
-        let other = signer::spec_signer(92);
-        // Other account attempts to cancel - abort ERR_NOT_ESCROW_OWNER (1)
-        let res = error::catch_abort_code(|| escrow::cancel_escrow(&other, index));
-        assert!(res == escrow::ERR_NOT_ESCROW_OWNER, 17);
-    }
+        /// Test claiming rewards with zero rewards aborts with invalid_state
+        #[test]
+        fun test_claim_rewards_with_zero_rewards_abort() {
+            let user = signer::spec_signer(0x8);
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
 
-    #[test]
-    fun test_get_escrow_invalid_index_fail() {
-        let sender = signer::spec_signer(100);
-        escrow::init_escrows(&sender);
-        // No escrows created yet, index 0 invalid
-        let res = error::catch_abort_code(|| escrow::get_escrow(&sender, 0));
-        assert!(res == escrow::ERR_ESCROW_NOT_EXISTS, 18);
-    }
+            Staking::stake(&user, 10);
+            let res = std::debug::catch_abort_code(|| Staking::claim_rewards(&user));
+            assert!(res == errors::invalid_state(0), 1);
+        }
 
-    #[test]
-    fun test_get_escrow_count_no_escrows() {
-        let sender = signer::spec_signer(110);
-        let count = escrow::get_escrow_count(&sender);
-        assert!(count == 0, 19);
+        /// Test claiming rewards after manual reward manipulation (simulate rewards accrued)
+        #[test]
+        fun test_claim_rewards_success() {
+            let user = signer::spec_signer(0x9);
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
+
+            Staking::stake(&user, 100);
+
+            // Manually update rewards for testing: simulate rewards accrued
+            {
+                let state = borrow_global_mut<Staking::StakingState>(0x1);
+                let idx_opt = Staking::find_user_index(&state.user_info, signer::address_of(&user));
+                assert!(option::is_some(&idx_opt), 999);
+                let idx = option::extract(idx_opt);
+                let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
+                user_info.rewards = 500;
+            }
+
+            Staking::claim_rewards(&user);
+
+            // After claim, rewards should reset to 0
+            let info_opt = get_user_info(signer::address_of(&user));
+            assert!(option::is_some(&info_opt), 1);
+            let (_, rewards) = option::extract(info_opt);
+            assert!(rewards == 0, 2);
+        }
+
+        /// Test multiple users staking and unstaking correctly track total staked
+        #[test]
+        fun test_multiple_users_stake_unstake() {
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
+
+            let user1 = signer::spec_signer(0xA);
+            let user2 = signer::spec_signer(0xB);
+
+            Staking::stake(&user1, 70);
+            Staking::stake(&user2, 30);
+
+            let total = get_total_staked();
+            assert!(total == 100, 1);
+
+            Staking::unstake(&user1, 20);
+            let total2 = get_total_staked();
+            assert!(total2 == 80, 2);
+
+            Staking::unstake(&user2, 30);
+            let total3 = get_total_staked();
+            assert!(total3 == 50, 3);
+        }
+
+        /// Test that calling update_rewards updates reward_per_token_stored and user rewards properly
+        #[test]
+        fun test_update_rewards_effect() {
+            let owner = signer::spec_signer(0x1);
+            setup(&owner, 10);
+
+            let user = signer::spec_signer(0xC);
+            Staking::stake(&user, 100);
+
+            // Manually set last_update_time far in past to simulate time passage
+            {
+                let state = borrow_global_mut<Staking::StakingState>(0x1);
+                state.last_update_time = 0; // reset to 0
+                state.reward_per_token_stored = 0;
+            }
+
+            // Call stake again to trigger update_rewards internally
+            Staking::stake(&user, 0);
+
+            // After update_rewards, reward_per_token_stored should be incremented (non-zero)
+            let state = borrow_global<Staking::StakingState>(0x1);
+            assert!(state.reward_per_token_stored > 0, 1);
+
+            // User rewards also updated
+            let info_opt = get_user_info(signer::address_of(&user));
+            assert!(option::is_some(&info_opt), 2);
+            let (_, rewards) = option::extract(info_opt);
+            assert!(rewards >= 0, 3); // rewards may be zero if no time diff, but non-negative
+        }
     }
 }

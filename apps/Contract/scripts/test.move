@@ -26,3 +26,6 @@ module Contract::test {
         assert!(count == 2, 42);
     }
 }
+
+
+

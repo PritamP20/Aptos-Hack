@@ -1,10 +1,18 @@
 [package]
-name = "Contract"
+name = "staking"
 version = "0.1.0"
-authors = [""] 
-
-[dependencies]
-AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework", rev = "mainnet" }
+authors = ["Your Name <youremail@example.com>"]
 
 [addresses]
-Contract = "0x1"
+Std = "0x1"
+
+[dependencies]
+# No external dependencies beyond std
+
+[features]
+default = []
+
+[[modules]]
+name = "Staking"
+address = "0x1"
+path = "sources/staking.move"

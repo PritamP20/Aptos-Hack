@@ -1,4 +1,4 @@
-module 0x5557ce722c8986927d41d146a4699649a0222c9e738fd8f6e97183d18644865b::KeyStorage {
+module 0xc28ce059e5716689b04a61d41593d3d8f33e85cd9534ebe64d551828468d6943::KeyStorage {
     use std::vector;
     use std::signer;
 

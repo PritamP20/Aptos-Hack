@@ -133,7 +133,7 @@ app.get("/health", (req, res) => {
 
 app.post("/generate-full-suite", async (req, res) => {
   try {
-    const { prompt, contractName = "Contract", contractAddress = "0x1" } = req.body;
+    const { prompt, contractName = "Contract", contractAddress = "0x5557ce722c8986927d41d146a4699649a0222c9e738fd8f6e97183d18644865b" } = req.body;
     if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
     // Generate Move contract
@@ -216,7 +216,7 @@ app.post("/deploy-contract", async (req, res) => {
     const contractPath = path.join(__dirname, "../Volume");
     await new Promise<void>((resolve, reject) => {
       exec(
-        `aptos move publish --package-dir ${contractPath} --private-key-file ${tempKeyFile}`,
+  `aptos move publish --package-dir ${contractPath} --private-key-file ${tempKeyFile} --skip-fetch-latest-git-deps`,
         (error, stdout, stderr) => {
           // Clean up temp key file
           try { require("fs").unlinkSync(tempKeyFile); } catch {}

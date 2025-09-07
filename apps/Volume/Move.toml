@@ -1,12 +1,10 @@
 [package]
 name = "Contract"
 version = "0.0.1"
-authors = ["Your Name <your.email@example.com>"]
+authors = [""]
 
 [addresses]
-Contract = "0x48bd1b77a08117f0a89a50314b84c22e1991d7feac0f1e8de90cede8b43ee151"
+Contract = "0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27"
 
-[dependencies.AptosFramework]
-git = "https://github.com/aptos-labs/aptos-core.git"
-rev = "devnet"
-subdir = "aptos-move/framework/aptos-framework"
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", rev = "devnet", subdir = "aptos-move/framework/aptos-framework" }

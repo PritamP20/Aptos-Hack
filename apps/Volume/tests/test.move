@@ -1,303 +1,230 @@
-// escrow_test.move
-module 0x48bd1b77a08117f0a89a50314b84c22e1991d7feac0f1e8de90cede8b43ee151::escrow_test {
+module 0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27::staking_test {
     use std::signer;
-    use std::error;
+    use std::option;
+    use std::vector;
     use std::coin;
     use std::string;
+    use std::error;
     use aptos_framework::timestamp;
-    use 0x48bd1b77a08117f0a89a50314b84c22e1991d7feac0f1e8de90cede8b43ee151::escrow;
+    use 0x1::test;
+    use 0x1::aptos_coin::{AptosCoin};
+    use 0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27::staking;
 
-    /// Dummy coin for testing
-    struct TestCoin has store, drop {}
+    /// Helper: Mints coins to the specified account
+    fun mint_coins<CoinType: store + key>(recipient: &signer, amount: u64) {
+        coin::register<CoinType>(recipient);
+        coin::mint<CoinType>(recipient, amount);
+    }
 
-    /// Mint coins for testing
-    fun mint_for(account: &signer, amount: u64) {
-        coin::register<TestCoin>(account);
-        let coin_val = coin::mint<TestCoin>(amount);
-        coin::deposit<TestCoin>(signer::address_of(account), coin_val);
+    /// Helper: Advances blockchain time in tests
+    fun advance_time(secs: u64) {
+        timestamp::set_time(timestamp::now_seconds() + secs);
     }
 
     #[test]
-    public fun test_init_event_holder() {
-        let account = @0x1;
-        let s = signer::specify(account);
-        escrow::init_event_holder(&s);
-        assert!(exists<escrow::EscrowEventHolder>(account), 100);
-    }
+    public fun test_init_config_only_owner() {
+        let owner = @0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27;
+        let not_owner = @0x1;
 
-    #[test]
-    public fun test_create_escrow_success() {
-        let depositor_addr = @0x2;
-        let beneficiary_addr = @0x3;
-        let arbiter_addr = @0x4;
-        let amount = 100;
-        let depositor = signer::specify(depositor_addr);
+        let owner_signer = test::create_signer(owner);
+        let not_owner_signer = test::create_signer(not_owner);
 
-        // Setup
-        mint_for(&depositor, amount);
+        // Should succeed for owner
+        staking::init_config(&owner_signer, 100, 500, 3600);
 
-        escrow::init_event_holder(&depositor);
-
-        // Withdraw coins from depositor
-        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
-
-        escrow::create_escrow<TestCoin>(
-            &depositor,
-            beneficiary_addr,
-            arbiter_addr,
-            amount,
-            coins
-        );
-
-        assert!(exists<escrow::Escrow<TestCoin>>(depositor_addr), 101);
-
-        let (dep, ben, arb, amt, status, created_at) = escrow::get_escrow<TestCoin>(depositor_addr);
-        assert!(dep == depositor_addr, 102);
-        assert!(ben == beneficiary_addr, 103);
-        assert!(arb == arbiter_addr, 104);
-        assert!(amt == amount, 105);
-        assert!(status == escrow::STATUS_PENDING, 106);
-    }
-
-    #[test]
-    public fun test_create_escrow_zero_amount_should_fail() {
-        let depositor_addr = @0x5;
-        let beneficiary_addr = @0x6;
-        let arbiter_addr = @0x7;
-        let depositor = signer::specify(depositor_addr);
-
-        mint_for(&depositor, 100);
-
-        escrow::init_event_holder(&depositor);
-
-        let coins = coin::withdraw<TestCoin>(depositor_addr, 100);
-
-        // Should fail due to zero amount
-        assert_abort_code(
-            escrow::EAMOUNT_ZERO,
-            fun () {
-                escrow::create_escrow<TestCoin>(
-                    &depositor,
-                    beneficiary_addr,
-                    arbiter_addr,
-                    0,
-                    coins
-                );
+        // Should fail for not owner
+        let res = test::execute_should_abort_code(
+            fun() {
+                staking::init_config(&not_owner_signer, 100, 500, 3600);
             }
         );
-    }
+        // ENOT_OWNER = 4
+        assert!(res == error::permission_denied(4), 100);
 
-    #[test]
-    public fun test_create_escrow_duplicate_should_fail() {
-        let depositor_addr = @0x8;
-        let beneficiary_addr = @0x9;
-        let arbiter_addr = @0xa;
-        let amount = 100;
-        let depositor = signer::specify(depositor_addr);
-
-        mint_for(&depositor, amount);
-
-        escrow::init_event_holder(&depositor);
-
-        let coins1 = coin::withdraw<TestCoin>(depositor_addr, amount);
-        escrow::create_escrow<TestCoin>(
-            &depositor,
-            beneficiary_addr,
-            arbiter_addr,
-            amount,
-            coins1
-        );
-
-        // Try to create another escrow for same depositor
-        let coins2 = coin::withdraw<TestCoin>(depositor_addr, amount);
-        assert_abort_code(
-            escrow::EESCROW_ALREADY_EXISTS,
-            fun () {
-                escrow::create_escrow<TestCoin>(
-                    &depositor,
-                    beneficiary_addr,
-                    arbiter_addr,
-                    amount,
-                    coins2
-                );
+        // Should fail if already initialized
+        let res2 = test::execute_should_abort_code(
+            fun() {
+                staking::init_config(&owner_signer, 100, 500, 3600);
             }
         );
+        // EALREADY_STAKED = 0
+        assert!(res2 == error::already_exists(0), 101);
     }
 
     #[test]
-    public fun test_release_success() {
-        let depositor_addr = @0xb;
-        let beneficiary_addr = @0xc;
-        let arbiter_addr = @0xd;
-        let amount = 200;
-        let depositor = signer::specify(depositor_addr);
-        let arbiter = signer::specify(arbiter_addr);
+    public fun test_init_events() {
+        let user_addr = @0x2;
+        let user_signer = test::create_signer(user_addr);
 
-        mint_for(&depositor, amount);
+        staking::init_events<AptosCoin>(&user_signer);
 
-        escrow::init_event_holder(&depositor);
-
-        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
-        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
-
-        // Release funds
-        escrow::release<TestCoin>(&arbiter, depositor_addr);
-
-        let (_, _, _, _, status, _) = escrow::get_escrow<TestCoin>(depositor_addr);
-        assert!(status == escrow::STATUS_RELEASED, 201);
-    }
-
-    #[test]
-    public fun test_release_not_arbiter_should_fail() {
-        let depositor_addr = @0xe;
-        let beneficiary_addr = @0xf;
-        let arbiter_addr = @0x10;
-        let wrong_arbiter_addr = @0x11;
-        let amount = 300;
-
-        let depositor = signer::specify(depositor_addr);
-        let wrong_arbiter = signer::specify(wrong_arbiter_addr);
-
-        mint_for(&depositor, amount);
-
-        escrow::init_event_holder(&depositor);
-
-        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
-        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
-
-        assert_abort_code(
-            escrow::ENOT_ARBITER,
-            fun () {
-                escrow::release<TestCoin>(&wrong_arbiter, depositor_addr);
-            }
+        // Should fail if already initialized
+        let res = test::execute_should_abort_code(
+            fun() { staking::init_events<AptosCoin>(&user_signer); }
         );
+        // EALREADY_STAKED = 0
+        assert!(res == error::already_exists(0), 200);
     }
 
     #[test]
-    public fun test_release_already_released_or_cancelled_should_fail() {
-        let depositor_addr = @0x12;
-        let beneficiary_addr = @0x13;
-        let arbiter_addr = @0x14;
-        let amount = 400;
+    public fun test_stake_and_get_stake() {
+        let owner = test::create_signer(@0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27);
+        let user_addr = @0x2;
+        let user_signer = test::create_signer(user_addr);
 
-        let depositor = signer::specify(depositor_addr);
-        let arbiter = signer::specify(arbiter_addr);
+        staking::init_config(&owner, 100, 500, 3600);
+        staking::init_events<AptosCoin>(&user_signer);
 
-        mint_for(&depositor, amount);
+        mint_coins<AptosCoin>(&user_signer, 1_000);
 
-        escrow::init_event_holder(&depositor);
-
-        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
-        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
-
-        // Release
-        escrow::release<TestCoin>(&arbiter, depositor_addr);
-
-        // Try to release again
-        assert_abort_code(
-            escrow::EESCROW_NOT_PENDING,
-            fun () {
-                escrow::release<TestCoin>(&arbiter, depositor_addr);
-            }
+        // Should fail if amount is zero
+        let res = test::execute_should_abort_code(
+            fun() { staking::stake<AptosCoin>(&user_signer, 0); }
         );
+        // EZERO_AMOUNT = 3
+        assert!(res == error::invalid_argument(3), 300);
 
-        // Cancel should also fail after release
-        assert_abort_code(
-            escrow::EESCROW_NOT_PENDING,
-            fun () {
-                escrow::cancel<TestCoin>(&arbiter, depositor_addr);
-            }
+        // Should fail if amount < min_stake
+        let res2 = test::execute_should_abort_code(
+            fun() { staking::stake<AptosCoin>(&user_signer, 50); }
         );
-    }
+        // EINSUFFICIENT_AMOUNT = 2
+        assert!(res2 == error::invalid_argument(2), 301);
 
-    #[test]
-    public fun test_cancel_success() {
-        let depositor_addr = @0x15;
-        let beneficiary_addr = @0x16;
-        let arbiter_addr = @0x17;
-        let amount = 500;
+        // Stake correct amount
+        staking::stake<AptosCoin>(&user_signer, 200);
 
-        let depositor = signer::specify(depositor_addr);
-        let arbiter = signer::specify(arbiter_addr);
-
-        mint_for(&depositor, amount);
-
-        escrow::init_event_holder(&depositor);
-
-        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
-        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
-
-        // Cancel escrow
-        escrow::cancel<TestCoin>(&arbiter, depositor_addr);
-
-        let (_, _, _, _, status, _) = escrow::get_escrow<TestCoin>(depositor_addr);
-        assert!(status == escrow::STATUS_CANCELLED, 301);
-    }
-
-    #[test]
-    public fun test_cancel_not_arbiter_should_fail() {
-        let depositor_addr = @0x18;
-        let beneficiary_addr = @0x19;
-        let arbiter_addr = @0x1a;
-        let wrong_arbiter_addr = @0x1b;
-        let amount = 600;
-
-        let depositor = signer::specify(depositor_addr);
-        let wrong_arbiter = signer::specify(wrong_arbiter_addr);
-
-        mint_for(&depositor, amount);
-
-        escrow::init_event_holder(&depositor);
-
-        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
-        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
-
-        assert_abort_code(
-            escrow::ENOT_ARBITER,
-            fun () {
-                escrow::cancel<TestCoin>(&wrong_arbiter, depositor_addr);
-            }
+        // Should fail if already staked
+        let res3 = test::execute_should_abort_code(
+            fun() { staking::stake<AptosCoin>(&user_signer, 200); }
         );
+        // EALREADY_STAKED = 0
+        assert!(res3 == error::already_exists(0), 302);
+
+        // Check stake info
+        let info = staking::get_stake<AptosCoin>(user_addr);
+        assert!(option::is_some(&info), 303);
+
+        let (amount, last_stake_timestamp, pending_reward) = *option::borrow(&info).unwrap();
+        assert!(amount == 200, 304);
+        assert!(pending_reward == 0, 305);
+        assert!(last_stake_timestamp > 0, 306);
     }
 
     #[test]
-    public fun test_get_escrow_not_found_should_fail() {
-        let not_exist_addr = @0x20;
-        assert_abort_code(
-            escrow::EESCROW_NOT_FOUND,
-            fun () {
-                escrow::get_escrow<TestCoin>(not_exist_addr);
-            }
+    public fun test_unstake_happy_flow() {
+        let owner = test::create_signer(@0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27);
+        let user_addr = @0x3;
+        let user_signer = test::create_signer(user_addr);
+
+        staking::init_config(&owner, 100, 1000, 10); // 10% per 10 seconds for easy testing
+        staking::init_events<AptosCoin>(&user_signer);
+        mint_coins<AptosCoin>(&user_signer, 1_000);
+
+        staking::stake<AptosCoin>(&user_signer, 500);
+
+        // Advance time by 20 seconds (2 periods)
+        advance_time(20);
+
+        staking::unstake<AptosCoin>(&user_signer);
+
+        // Stake should be removed
+        let info = staking::get_stake<AptosCoin>(user_addr);
+        assert!(option::is_none(&info), 400);
+
+        // Check user balance includes principal + reward: 500 + (500*1000*2/10000) = 500 + 100 = 600
+        // Use coin::balance to check
+        let bal = coin::balance<AptosCoin>(user_addr);
+        assert!(bal == 1_000, 401); // 1_000 - 500 staked, 600 returned -> net balance should be original (no loss)
+    }
+
+    #[test]
+    public fun test_unstake_no_stake() {
+        let user_signer = test::create_signer(@0x4);
+
+        let res = test::execute_should_abort_code(
+            fun() { staking::unstake<AptosCoin>(&user_signer); }
         );
+        // ENOT_STAKED = 1
+        assert!(res == error::not_found(1), 500);
     }
 
     #[test]
-    public fun test_events_emitted_on_create_release_cancel() {
-        let depositor_addr = @0x21;
-        let beneficiary_addr = @0x22;
-        let arbiter_addr = @0x23;
-        let amount = 700;
+    public fun test_claim_rewards() {
+        let owner = test::create_signer(@0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27);
+        let user_addr = @0x5;
+        let user_signer = test::create_signer(user_addr);
 
-        let depositor = signer::specify(depositor_addr);
-        let arbiter = signer::specify(arbiter_addr);
+        staking::init_config(&owner, 100, 1000, 10); // 10% per 10 sec
+        staking::init_events<AptosCoin>(&user_signer);
+        mint_coins<AptosCoin>(&user_signer, 1_000);
 
-        mint_for(&depositor, amount);
+        staking::stake<AptosCoin>(&user_signer, 500);
 
-        escrow::init_event_holder(&depositor);
+        // Should fail if claiming immediately (no rewards)
+        let res = test::execute_should_abort_code(
+            fun() { staking::claim_rewards<AptosCoin>(&user_signer); }
+        );
+        // EZERO_AMOUNT = 3
+        assert!(res == error::invalid_argument(3), 600);
 
-        let coins = coin::withdraw<TestCoin>(depositor_addr, amount);
+        // Advance time by 10 seconds
+        advance_time(10);
 
-        // Create
-        escrow::create_escrow<TestCoin>(&depositor, beneficiary_addr, arbiter_addr, amount, coins);
+        staking::claim_rewards<AptosCoin>(&user_signer);
 
-        let holder = borrow_global<escrow::EscrowEventHolder>(depositor_addr);
-        assert!(event::count(&holder.created_events) == 1, 401);
+        // Should be able to claim again only after more time
+        let res2 = test::execute_should_abort_code(
+            fun() { staking::claim_rewards<AptosCoin>(&user_signer); }
+        );
+        assert!(res2 == error::invalid_argument(3), 601);
+    }
 
-        // Release
-        escrow::release<TestCoin>(&arbiter, depositor_addr);
-        assert!(event::count(&holder.released_events) == 1, 402);
+    #[test]
+    public fun test_get_config() {
+        let owner = test::create_signer(@0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27);
 
-        // No cancelled yet
-        assert!(event::count(&holder.cancelled_events) == 0, 403);
+        staking::init_config(&owner, 123, 456, 789);
+
+        let (min_stake, reward_bps, reward_period) = staking::get_config();
+        assert!(min_stake == 123, 700);
+        assert!(reward_bps == 456, 701);
+        assert!(reward_period == 789, 702);
+    }
+
+    #[test]
+    public fun test_multiple_users_and_coin_types() {
+        let owner = test::create_signer(@0x30ed1b735e58ff52853fb862c0cded727f11c277e82aec24082e2ab63fe74c27);
+        let user1_addr = @0x6;
+        let user2_addr = @0x7;
+        let user1_signer = test::create_signer(user1_addr);
+        let user2_signer = test::create_signer(user2_addr);
+
+        staking::init_config(&owner, 100, 1000, 10);
+        staking::init_events<AptosCoin>(&user1_signer);
+        staking::init_events<AptosCoin>(&user2_signer);
+
+        mint_coins<AptosCoin>(&user1_signer, 1_000);
+        mint_coins<AptosCoin>(&user2_signer, 2_000);
+
+        staking::stake<AptosCoin>(&user1_signer, 200);
+        staking::stake<AptosCoin>(&user2_signer, 400);
+
+        advance_time(10);
+
+        staking::claim_rewards<AptosCoin>(&user1_signer);
+        staking::claim_rewards<AptosCoin>(&user2_signer);
+
+        advance_time(10);
+
+        staking::unstake<AptosCoin>(&user1_signer);
+        staking::unstake<AptosCoin>(&user2_signer);
+
+        // Both users should have their stake + rewards back
+        let bal1 = coin::balance<AptosCoin>(user1_addr);
+        let bal2 = coin::balance<AptosCoin>(user2_addr);
+
+        assert!(bal1 == 1_000, 800);
+        assert!(bal2 == 2_000, 801);
     }
 }

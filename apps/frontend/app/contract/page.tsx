@@ -717,7 +717,7 @@ const Page = () => {
       <div className={`w-1/4 ${cardClass} border-r ${borderClass} flex flex-col h-full`}>
         {/* Header */}
         <div className={`p-4 border-b ${borderClass} flex items-center justify-between flex-shrink-0`}>
-          <h1 className="text-xl font-bold">AI Chat</h1>
+          <h1 className="text-xl font-bold">MoveAI</h1>
           <div className="flex items-center gap-2">
             <button
               onClick={clearChat}
@@ -743,15 +743,15 @@ const Page = () => {
                 >
                   <Key size={12} />
                   {isStorageInitialized ? "Init'd" : "Init"}
-                </button>
-                <button
+                </button> 
+                {/* <button
                   onClick={testContractExists}
                   className={`px-3 py-1 text-sm rounded-lg ${isDark ? "bg-purple-700 hover:bg-purple-600" : "bg-purple-200 hover:bg-purple-300"} transition-colors`}
                   disabled={isProcessing}
                   title="Test if contract is deployed and accessible"
                 >
                   Test
-                </button>
+                </button> */}
               </>
             )}
             <button

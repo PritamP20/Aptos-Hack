@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
+import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import {
   ArrowRight,
   Code,
@@ -20,6 +21,17 @@ import {
   Award,
   ChevronRight,
   Play,
+  Wallet,
+  Menu,
+  X,
+  Clock,
+  Eye,
+  Download,
+  Copy,
+  ExternalLink,
+  FileCode,
+  Calendar,
+  ChevronLeft,
 } from "lucide-react";
 
 const Home = () => {
@@ -27,6 +39,61 @@ const Home = () => {
   const [isHovered, setIsHovered] = useState(false);
   const [activeFeature, setActiveFeature] = useState(0);
   const [currentTestimonial, setCurrentTestimonial] = useState(0);
+  const [isWalletConnected, setIsWalletConnected] = useState(false);
+  const [walletAddress, setWalletAddress] = useState("");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [userContracts, setUserContracts] = useState([]);
+  const { connect, disconnect, connected, account } = useWallet();
+
+  // Mock contract data - in a real app, this would come from your backend
+  const mockContracts = [
+    {
+      id: "1",
+      name: "DeFi Lending Protocol",
+      type: "DeFi",
+      date: "2025-01-15",
+      status: "Deployed",
+      network: "Mainnet",
+      prompt:
+        "Create a comprehensive DeFi lending protocol with multi-collateral support",
+      contractAddress: "0x1234...5678",
+      tvl: "$2.1M",
+    },
+    {
+      id: "2",
+      name: "NFT Marketplace",
+      type: "NFT",
+      date: "2025-01-10",
+      status: "Testing",
+      network: "Testnet",
+      prompt: "Build an NFT marketplace with Dutch auction mechanisms",
+      contractAddress: "0xabcd...efgh",
+      tvl: "N/A",
+    },
+    {
+      id: "3",
+      name: "Governance DAO",
+      type: "Governance",
+      date: "2025-01-05",
+      status: "Deployed",
+      network: "Mainnet",
+      prompt:
+        "Deploy a governance DAO with proposal systems and treasury management",
+      contractAddress: "0x9876...5432",
+      tvl: "$850K",
+    },
+    {
+      id: "4",
+      name: "Staking Pool",
+      type: "DeFi",
+      date: "2024-12-28",
+      status: "Deployed",
+      network: "Mainnet",
+      prompt: "Create a staking pool with automatic compounding rewards",
+      contractAddress: "0xfedc...ba98",
+      tvl: "$1.5M",
+    },
+  ];
 
   const features = [
     {
@@ -128,10 +195,72 @@ const Home = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Load user contracts when wallet is connected
+  useEffect(() => {
+    if (isWalletConnected) {
+      setUserContracts(mockContracts);
+    } else {
+      setUserContracts([]);
+    }
+  }, [isWalletConnected]);
+
+  const handleConnectWallet = async () => {
+    // Mock wallet connection - replace with actual wallet connection logic
+    try {
+      connect("Petra");
+      setIsWalletConnected(true);
+      setWalletAddress("0x1234...5678");
+      setIsSidebarOpen(true); // Auto-open sidebar when wallet connects
+    } catch (error) {
+      console.error("Failed to connect wallet:", error);
+    }
+  };
+
+  const handleDisconnectWallet = () => {
+    setIsWalletConnected(false);
+    setWalletAddress("");
+    setIsSidebarOpen(false);
+    setUserContracts([]);
+  };
+
   const handleGenerate = () => {
     if (prompt.trim()) {
       console.log("Generating contract for:", prompt);
       // Add your contract generation logic here
+    }
+  };
+
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case "Deployed":
+        return "bg-green-500/10 text-green-400 border-green-500/20";
+      case "Testing":
+        return "bg-yellow-500/10 text-yellow-400 border-yellow-500/20";
+      case "Draft":
+        return "bg-gray-500/10 text-gray-400 border-gray-500/20";
+      default:
+        return "bg-blue-500/10 text-blue-400 border-blue-500/20";
+    }
+  };
+
+  const getTypeColor = (type) => {
+    switch (type) {
+      case "DeFi":
+        return "bg-purple-500/10 text-purple-400 border-purple-500/20";
+      case "NFT":
+        return "bg-pink-500/10 text-pink-400 border-pink-500/20";
+      case "Governance":
+        return "bg-blue-500/10 text-blue-400 border-blue-500/20";
+      default:
+        return "bg-gray-500/10 text-gray-400 border-gray-500/20";
     }
   };
 
@@ -155,6 +284,157 @@ const Home = () => {
           }}
         ></div>
       </div>
+
+      {/* Contract History Sidebar */}
+      <div
+        className={`fixed top-0 right-0 h-full w-80 bg-black/90 backdrop-blur-xl border-l border-gray-800/50 transform transition-transform duration-300 z-50 ${
+          isSidebarOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="p-6 h-full flex flex-col">
+          {/* Sidebar Header */}
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-white">
+                Your Contracts
+              </h3>
+              <p className="text-sm text-gray-400">
+                {isWalletConnected
+                  ? `${userContracts.length} contracts found`
+                  : "Connect wallet to view"}
+              </p>
+            </div>
+            <button
+              onClick={() => setIsSidebarOpen(false)}
+              className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+
+          {/* Wallet Status */}
+          {isWalletConnected && (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 mb-6">
+              <div className="flex items-center space-x-3">
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                <div>
+                  <p className="text-sm font-medium text-green-400">
+                    Wallet Connected
+                  </p>
+                  <p className="text-xs text-gray-400">{walletAddress}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Contract List */}
+          <div className="flex-1 overflow-y-auto space-y-4">
+            {userContracts.length > 0 ? (
+              userContracts.map((contract) => (
+                <div
+                  key={contract.id}
+                  className="bg-gray-900/50 rounded-xl p-4 border border-gray-800/50 hover:border-gray-700/50 transition-all cursor-pointer group"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <h4 className="text-white font-medium text-sm mb-1">
+                        {contract.name}
+                      </h4>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <span
+                          className={`px-2 py-1 text-xs rounded-full border ${getTypeColor(contract.type)}`}
+                        >
+                          {contract.type}
+                        </span>
+                        <span
+                          className={`px-2 py-1 text-xs rounded-full border ${getStatusColor(contract.status)}`}
+                        >
+                          {contract.status}
+                        </span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-500 group-hover:text-white transition-colors" />
+                  </div>
+
+                  <div className="space-y-2 text-xs text-gray-400">
+                    <div className="flex items-center space-x-2">
+                      <Calendar className="w-3 h-3" />
+                      <span>{formatDate(contract.date)}</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Globe className="w-3 h-3" />
+                      <span>{contract.network}</span>
+                    </div>
+                    {contract.tvl !== "N/A" && (
+                      <div className="flex items-center space-x-2">
+                        <TrendingUp className="w-3 h-3" />
+                        <span>TVL: {contract.tvl}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center space-x-2 mt-3 pt-3 border-t border-gray-800">
+                    <button className="flex items-center space-x-1 px-2 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded text-xs transition-colors">
+                      <Eye className="w-3 h-3" />
+                      <span>View</span>
+                    </button>
+                    <button className="flex items-center space-x-1 px-2 py-1 bg-green-500/10 hover:bg-green-500/20 text-green-400 rounded text-xs transition-colors">
+                      <Download className="w-3 h-3" />
+                      <span>Export</span>
+                    </button>
+                    <button
+                      onClick={() => setPrompt(contract.prompt)}
+                      className="flex items-center space-x-1 px-2 py-1 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 rounded text-xs transition-colors"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Clone</span>
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8">
+                <FileCode className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+                <p className="text-gray-400 text-sm mb-2">No contracts yet</p>
+                <p className="text-gray-500 text-xs">
+                  {isWalletConnected
+                    ? "Generate your first smart contract to see it here"
+                    : "Connect your wallet to view your contracts"}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar Footer */}
+          <div className="pt-4 border-t border-gray-800/50 mt-4">
+            {isWalletConnected ? (
+              <button
+                onClick={handleDisconnectWallet}
+                className="w-full flex items-center justify-center space-x-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 px-4 py-2 rounded-lg text-sm transition-colors"
+              >
+                <Wallet className="w-4 h-4" />
+                <span>Disconnect Wallet</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleConnectWallet}
+                className="w-full flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm transition-colors"
+              >
+                <Wallet className="w-4 h-4" />
+                <span>Connect Wallet</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        ></div>
+      )}
 
       {/* Enhanced Header */}
       <header className="relative z-10 py-4 backdrop-blur-sm border-b border-gray-800/50">
@@ -203,14 +483,63 @@ const Home = () => {
                 Support
               </a>
               <div className="flex items-center space-x-3">
-                <button className="text-gray-400 hover:text-white transition-colors text-sm font-medium">
-                  Sign In
-                </button>
-                <button className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-lg">
-                  Start Free Trial
-                </button>
+                {isWalletConnected ? (
+                  <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2 bg-green-500/10 border border-green-500/20 rounded-full px-3 py-2">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                      <span className="text-green-400 text-sm font-medium">
+                        {walletAddress}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                      className="relative bg-gradient-to-r from-blue-600 to-purple-600 text-white p-2.5 rounded-full hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-lg"
+                    >
+                      {isSidebarOpen ? (
+                        <ChevronRight className="w-4 h-4" />
+                      ) : (
+                        <ChevronLeft className="w-4 h-4" />
+                      )}
+                      {userContracts.length > 0 && (
+                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">
+                          {userContracts.length}
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button className="text-gray-400 hover:text-white transition-colors text-sm font-medium">
+                      Sign In
+                    </button>
+                    <button
+                      onClick={handleConnectWallet}
+                      className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-lg flex items-center space-x-2"
+                    >
+                      <Wallet className="w-4 h-4" />
+                      <span>Connect Wallet</span>
+                    </button>
+                  </>
+                )}
               </div>
             </nav>
+
+            {/* Mobile Menu Toggle */}
+            <div className="lg:hidden flex items-center space-x-3">
+              {isWalletConnected && (
+                <button
+                  onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                  className="relative bg-gradient-to-r from-blue-600 to-purple-600 text-white p-2 rounded-lg"
+                >
+                  <Menu className="w-5 h-5" />
+                  {userContracts.length > 0 && (
+                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">
+                      {userContracts.length}
+                    </div>
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -240,7 +569,7 @@ const Home = () => {
                     onClick={handleGenerate}
                     className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-10 py-4 rounded-full font-semibold hover:from-blue-700 hover:to-purple-700 transition-all duration-200 transform hover:scale-105 shadow-xl flex items-center space-x-2"
                   >
-                    <span>Start Building Now</span>
+                    <a href="/contract">Start Building Now</a>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                   <button className="bg-black/50 backdrop-blur-sm border border-gray-700 text-white px-10 py-4 rounded-full font-semibold hover:bg-gray-900/50 transition-all duration-200 flex items-center space-x-2">

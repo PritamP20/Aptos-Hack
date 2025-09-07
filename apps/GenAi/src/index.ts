@@ -284,6 +284,23 @@ Some common Errors Avoid these erros:
   │     use std::address;
   │         ^^^^^^^^^^^^ Invalid 'use'. Unbound module: '(std=0x1)::address'
 
+8.  error: unexpected token
+   ┌─ /Users/pritam/Documents/Projects/AptosCrafter/apps/Volume/sources/Contract.move:79:17
+   │
+ │         let mut total = 0u64;
+   │                 ^^^^^
+   │                 │
+   │                 Unexpected 'total'
+   │                 Expected ';'
+9. error: unexpected token
+   ┌─ /Users/pritam/Documents/Projects/AptosCrafter/apps/Volume/sources/Contract.move:46:9
+   │
+   │         assert!(!exists<Stake>(addr), error::already_exists(EALREADY_STAKED));
+   │         ^^^^^^
+   │         │
+   │         Unexpected 'assert'
+   │         Expected ';'
+
 Use these in your Perplexity prompt to ensure generated contracts adhere to syntax, security, and best practices. For more, refer to aptos.dev docs.
 `;
 

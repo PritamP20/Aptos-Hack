@@ -1,221 +1,184 @@
-address 0x1 {
-    module Staking {
+module 0xe8d532de3a122759fdf2ed724e8461584bf2b282a55f500fd6473e814da7d264::student_management {
+    use std::signer;
+    use std::string;
+    use std::error;
+    use std::event;
+    use std::vector;
+    use std::option;
 
-        use std::signer;
-        use std::vector;
-        use std::errors;
-        use std::event;
+    /// Error codes
+    const EStudentAlreadyExists: u64 = 0;
+    const EStudentNotFound: u64 = 1;
+    const ENotOwner: u64 = 2;
 
-        /// Error codes
-        const ENOT_STAKED: u64 = 1;
-        const EINSUFFICIENT_BALANCE: u64 = 2;
-        const ENOT_AUTHORIZED: u64 = 3;
-        const EZERO_AMOUNT: u64 = 4;
+    /// Struct representing a student
+    struct Student has store, drop, copy, key {
+        id: u64,
+        name: string::String,
+        age: u8,
+        owner: address,
+    }
 
-        /// Event emitted when a user stakes tokens
-        struct StakedEvent has copy, drop, store {
-            staker: address,
-            amount: u64,
+    /// Resource: Holds all students for an account
+    struct StudentBook has key {
+        next_id: u64,
+        students: vector<Student>,
+    }
+
+    /// Event: StudentAdded
+    #[event]
+    struct StudentAddedEvent has drop, store {
+        owner: address,
+        student_id: u64,
+        name: string::String,
+    }
+
+    /// Event: StudentUpdated
+    #[event]
+    struct StudentUpdatedEvent has drop, store {
+        owner: address,
+        student_id: u64,
+        new_name: string::String,
+        new_age: u8,
+    }
+
+    /// Event: StudentDeleted
+    #[event]
+    struct StudentDeletedEvent has drop, store {
+        owner: address,
+        student_id: u64,
+    }
+
+    /// Resource: Event handle container
+    struct StudentEvents has key {
+        added_handle: event::EventHandle<StudentAddedEvent>,
+        updated_handle: event::EventHandle<StudentUpdatedEvent>,
+        deleted_handle: event::EventHandle<StudentDeletedEvent>,
+    }
+
+    /// Initializes the student book and event handles for a new account
+    public entry fun init_account(account: &signer) {
+        let addr = signer::address_of(account);
+        assert!(
+            !exists<StudentBook>(addr),
+            error::already_exists(EStudentAlreadyExists)
+        );
+        move_to(account, StudentBook {
+            next_id: 1,
+            students: vector::empty<Student>(),
+        });
+        move_to(account, StudentEvents {
+            added_handle: event::new_event_handle<StudentAddedEvent>(account),
+            updated_handle: event::new_event_handle<StudentUpdatedEvent>(account),
+            deleted_handle: event::new_event_handle<StudentDeletedEvent>(account),
+        });
+    }
+
+    /// Add a new student to the caller's student book.
+    public entry fun add_student(account: &signer, name: string::String, age: u8) acquires StudentBook, StudentEvents {
+        let addr = signer::address_of(account);
+        let book = borrow_global_mut<StudentBook>(addr);
+        let student_id = book.next_id;
+        book.next_id = student_id + 1;
+        let student = Student {
+            id: student_id,
+            name: name.clone(),
+            age,
+            owner: addr,
+        };
+        vector::push_back<Student>(&mut book.students, student);
+
+        let events = borrow_global_mut<StudentEvents>(addr);
+        event::emit<StudentAddedEvent>(
+            &mut events.added_handle,
+            StudentAddedEvent {
+                owner: addr,
+                student_id,
+                name,
+            }
+        );
+    }
+
+    /// Update a student's info (name, age) by id. Only owner can update their students.
+    public entry fun update_student(account: &signer, student_id: u64, new_name: string::String, new_age: u8) acquires StudentBook, StudentEvents {
+        let addr = signer::address_of(account);
+        let book = borrow_global_mut<StudentBook>(addr);
+        let (i, found) = find_student_idx(&book.students, student_id);
+        assert!(found, error::not_found(EStudentNotFound));
+        let student_ref = vector::borrow_mut<Student>(&mut book.students, i);
+        assert!(student_ref.owner == addr, error::permission_denied(ENotOwner));
+        student_ref.name = new_name.clone();
+        student_ref.age = new_age;
+
+        let events = borrow_global_mut<StudentEvents>(addr);
+        event::emit<StudentUpdatedEvent>(
+            &mut events.updated_handle,
+            StudentUpdatedEvent {
+                owner: addr,
+                student_id,
+                new_name,
+                new_age,
+            }
+        );
+    }
+
+    /// Remove a student by id. Only owner can remove their students.
+    public entry fun remove_student(account: &signer, student_id: u64) acquires StudentBook, StudentEvents {
+        let addr = signer::address_of(account);
+        let book = borrow_global_mut<StudentBook>(addr);
+        let (i, found) = find_student_idx(&book.students, student_id);
+        assert!(found, error::not_found(EStudentNotFound));
+        let student_ref = vector::borrow<Student>(&book.students, i);
+        assert!(student_ref.owner == addr, error::permission_denied(ENotOwner));
+        vector::swap_remove<Student>(&mut book.students, i);
+
+        let events = borrow_global_mut<StudentEvents>(addr);
+        event::emit<StudentDeletedEvent>(
+            &mut events.deleted_handle,
+            StudentDeletedEvent {
+                owner: addr,
+                student_id,
+            }
+        );
+    }
+
+    /// View: Get all students for an account
+    #[view]
+    public fun get_students(addr: address): vector<Student> acquires StudentBook {
+        if (!exists<StudentBook>(addr)) {
+            return vector::empty<Student>();
+        };
+        let book = borrow_global<StudentBook>(addr);
+        vector::copy<Student>(&book.students)
+    }
+
+    /// View: Get a student by id for an address
+    #[view]
+    public fun get_student(addr: address, student_id: u64): option::Option<Student> acquires StudentBook {
+        if (!exists<StudentBook>(addr)) {
+            return option::none<Student>();
+        };
+        let book = borrow_global<StudentBook>(addr);
+        let (i, found) = find_student_idx(&book.students, student_id);
+        if (!found) {
+            option::none<Student>()
+        } else {
+            let student = vector::borrow<Student>(&book.students, i);
+            option::some<Student>(copy *student)
         }
+    }
 
-        /// Event emitted when a user unstakes tokens
-        struct UnstakedEvent has copy, drop, store {
-            staker: address,
-            amount: u64,
-        }
-
-        /// Event emitted when a user claims rewards
-        struct RewardPaidEvent has copy, drop, store {
-            staker: address,
-            amount: u64,
-        }
-
-        /// Resource storing all staking-related state
-        struct StakingState has key {
-            total_staked: u64,
-            reward_rate: u64, // reward tokens per staked token per epoch (or unit of time)
-            last_update_time: u64,
-            reward_per_token_stored: u64,
-            /// Mapping from user address to UserInfo
-            user_info: vector<(address, UserInfo)>,
-            staked_event_handle: event::EventHandle<StakedEvent>,
-            unstaked_event_handle: event::EventHandle<UnstakedEvent>,
-            reward_paid_event_handle: event::EventHandle<RewardPaidEvent>,
-        }
-
-        /// Struct to store individual user staking info
-        struct UserInfo has copy, drop, store {
-            amount: u64,
-            reward_debt: u64,
-            rewards: u64,
-            last_stake_time: u64,
-        }
-
-        /// Initializes staking state under the deployer (owner) account
-        public fun initialize(owner: &signer, reward_rate: u64) {
-            assert!(!exists<StakingState>(signer::address_of(owner)), errors::already_exists(0));
-            let state = StakingState {
-                total_staked: 0,
-                reward_rate,
-                last_update_time: 0,
-                reward_per_token_stored: 0,
-                user_info: vector::empty(),
-                staked_event_handle: event::new_event_handle<StakedEvent>(owner),
-                unstaked_event_handle: event::new_event_handle<UnstakedEvent>(owner),
-                reward_paid_event_handle: event::new_event_handle<RewardPaidEvent>(owner),
+    /// Helper: Find index of a student by id in a vector. Returns (index, found)
+    fun find_student_idx(students: &vector<Student>, id: u64): (u64, bool) {
+        let len = vector::length<Student>(students);
+        let mut i = 0;
+        while (i < len) {
+            let student = vector::borrow<Student>(students, i);
+            if (student.id == id) {
+                return (i, true);
             };
-            move_to(owner, state);
-        }
-
-        /// Internal helper: Find user info by address, returns index or none
-        fun find_user_index(user_info: &vector<(address, UserInfo)>, user: address): option::Option<u64> {
-            let length = vector::length(user_info);
-            let mut i = 0;
-            while (i < length) {
-                let (addr, _) = *vector::borrow(user_info, i);
-                if (addr == user) {
-                    return option::some(i);
-                };
-                i = i + 1;
-            };
-            option::none()
-        }
-
-        /// Internal helper: Update rewards accounting for a user
-        fun update_rewards(state: &mut StakingState, user_addr: address) {
-            let current_time = timestamp();
-            let time_diff = current_time - state.last_update_time;
-            if (state.total_staked > 0 && time_diff > 0) {
-                // Calculate new reward per token
-                let additional_reward_per_token = (time_diff * state.reward_rate * 1_000_000) / state.total_staked;
-                state.reward_per_token_stored = state.reward_per_token_stored + additional_reward_per_token;
-            };
-            state.last_update_time = current_time;
-
-            // Update user's rewards
-            let user_index_opt = find_user_index(&state.user_info, user_addr);
-            if (option::is_some(&user_index_opt)) {
-                let idx = option::extract(user_index_opt);
-                let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
-                let earned = (user_info.amount * (state.reward_per_token_stored - user_info.reward_debt)) / 1_000_000;
-                user_info.rewards = user_info.rewards + earned;
-                user_info.reward_debt = state.reward_per_token_stored;
-            }
-        }
-
-        /// Public entry function to stake tokens
-        /// Note: This example does not handle token transfer; assumes tokens are managed off-chain or externally.
-        public entry fun stake(user: &signer, amount: u64) acquires StakingState {
-            assert!(amount > 0, errors::invalid_argument(EZERO_AMOUNT));
-            let addr = signer::address_of(user);
-            let state = borrow_global_mut<StakingState>(0x1);
-
-            // Update rewards for this user before changing amount
-            update_rewards(state, addr);
-
-            let user_index_opt = find_user_index(&state.user_info, addr);
-            if (option::is_some(&user_index_opt)) {
-                let idx = option::extract(user_index_opt);
-                let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
-                user_info.amount = user_info.amount + amount;
-                user_info.reward_debt = state.reward_per_token_stored;
-                user_info.last_stake_time = timestamp();
-            } else {
-                let new_user_info = UserInfo {
-                    amount,
-                    reward_debt: state.reward_per_token_stored,
-                    rewards: 0,
-                    last_stake_time: timestamp(),
-                };
-                vector::push_back(&mut state.user_info, (addr, new_user_info));
-            }
-
-            state.total_staked = state.total_staked + amount;
-
-            // Emit stake event
-            event::emit_event(&mut state.staked_event_handle, StakedEvent { staker: addr, amount });
-
-        }
-
-        /// Public entry function to unstake tokens
-        public entry fun unstake(user: &signer, amount: u64) acquires StakingState {
-            assert!(amount > 0, errors::invalid_argument(EZERO_AMOUNT));
-            let addr = signer::address_of(user);
-            let state = borrow_global_mut<StakingState>(0x1);
-
-            // Update rewards for this user before changing amount
-            update_rewards(state, addr);
-
-            let user_index_opt = find_user_index(&state.user_info, addr);
-            assert!(option::is_some(&user_index_opt), errors::not_found(ENOT_STAKED));
-            let idx = option::extract(user_index_opt);
-            let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
-            assert!(user_info.amount >= amount, errors::invalid_argument(EINSUFFICIENT_BALANCE));
-
-            user_info.amount = user_info.amount - amount;
-            user_info.reward_debt = state.reward_per_token_stored;
-
-            state.total_staked = state.total_staked - amount;
-
-            // If user fully unstaked, remove from vector (simple swap remove)
-            if (user_info.amount == 0) {
-                let length = vector::length(&state.user_info);
-                if (idx < length - 1) {
-                    let last = vector::pop_back(&mut state.user_info);
-                    vector::borrow_mut(&mut state.user_info, idx).copy_from(&last);
-                } else {
-                    vector::pop_back(&mut state.user_info);
-                }
-            }
-
-            // Emit unstake event
-            event::emit_event(&mut state.unstaked_event_handle, UnstakedEvent { staker: addr, amount });
-        }
-
-        /// Public entry function to claim accumulated rewards
-        public entry fun claim_rewards(user: &signer) acquires StakingState {
-            let addr = signer::address_of(user);
-            let state = borrow_global_mut<StakingState>(0x1);
-
-            update_rewards(state, addr);
-
-            let user_index_opt = find_user_index(&state.user_info, addr);
-            assert!(option::is_some(&user_index_opt), errors::not_found(ENOT_STAKED));
-            let idx = option::extract(user_index_opt);
-            let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
-
-            let reward = user_info.rewards;
-            assert!(reward > 0, errors::invalid_state(0));
-
-            user_info.rewards = 0;
-
-            // Emit reward paid event
-            event::emit_event(&mut state.reward_paid_event_handle, RewardPaidEvent { staker: addr, amount: reward });
-
-            // Note: Actual token transfer of rewards should be implemented here as needed.
-        }
-
-        /// View function to get a user's staked amount and pending rewards
-        public fun get_user_info(state: &StakingState, user: address): option::Option<(u64, u64)> {
-            let user_index_opt = find_user_index(&state.user_info, user);
-            if (option::is_some(&user_index_opt)) {
-                let idx = option::extract(user_index_opt);
-                let (_, user_info) = *vector::borrow(&state.user_info, idx);
-                Some((user_info.amount, user_info.rewards))
-            } else {
-                option::none()
-            }
-        }
-
-        /// View function to get total staked tokens
-        public fun get_total_staked(state: &StakingState): u64 {
-            state.total_staked
-        }
-
-        /// Internal helper to get current timestamp (mock-up, may differ on actual chain)
-        fun timestamp(): u64 {
-            // Placeholder for actual timestamp retrieval
-            0
-        }
+            i = i + 1;
+        };
+        (0, false)
     }
 }

@@ -15,7 +15,7 @@ const Home = () => {
   };
 
   return (
-    <div className="min-h-screen h-screen bg-gradient-to-br from-black via-gray-900 to-black text-white overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black text-white">
       {/* Background Pattern */}
       <div className="absolute inset-0 opacity-10">
         <div
@@ -63,8 +63,11 @@ const Home = () => {
       </header>
 
       {/* Main Content */}
-      <main className="relative z-10 flex-1 flex items-center justify-center px-6 py-12">
-        <div className="max-w-4xl mx-auto text-center">
+      <main
+        className="relative z-10 px-6 py-12 overflow-y-auto"
+        style={{ maxHeight: "calc(100vh - 200px)" }}
+      >
+        <div className="max-w-4xl mx-auto text-center pb-12">
           {/* Hero Section */}
           <div className="mb-12">
             <div className="inline-flex items-center space-x-2 bg-white/10 backdrop-blur-sm rounded-full px-4 py-2 mb-8">

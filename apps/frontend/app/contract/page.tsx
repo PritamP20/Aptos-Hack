@@ -1,10 +1,9 @@
 "use client";
-import React, { useState } from "react";
-import { Moon, Sun, Send, Bot, Wallet, User, LogOut } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Moon, Sun, Send, Bot, Wallet, User, LogOut, AlertCircle } from "lucide-react";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { HexString } from "aptos";
 import axios from "axios";
-// import Staking from "../../components/ByteCode/Staking"
 
 interface Message {
   text: string;
@@ -14,127 +13,172 @@ interface Message {
 }
 
 const Page = () => {
-  // Access fields / functions from the adapter
-  const { account, connected, wallet, connect, disconnect, wallets: walletList } = useWallet();
+  const { account, connected, wallet, wallets: walletList, connect, disconnect, signAndSubmitTransaction } = useWallet();
+
   const wallets = walletList || []; 
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const [isDark, setIsDark] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [showWalletOptions, setShowWalletOptions] = useState(false);
+  const [apiUrl, setApiUrl] = useState("http://localhost:3002");
 
   const bgClass = isDark ? "bg-black" : "bg-white";
   const textClass = isDark ? "text-white" : "text-black";
   const borderClass = isDark ? "border-gray-700" : "border-gray-300";
   const cardClass = isDark ? "bg-gray-900" : "bg-gray-50";
 
-  const DeployContract = async () => {
-    try {
-      const response = await axios.post("http://localhost:3002/deploy-contract")
-      console.log(response.data);
-    } catch (error) {
-      throw error;
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Initialize with welcome message
+  useEffect(() => {
+    const welcomeMessage = {
+      text: "Welcome! I'm your AI assistant. Connect your wallet to get started with advanced features.",
+      sender: "ai",
+      timestamp: new Date().toISOString(),
+    };
+    setMessages([welcomeMessage]);
+  }, []);
+
+  const addMessage = (text: string, sender: string, isError = false) => {
+    const message = {
+      text,
+      sender,
+      timestamp: new Date().toISOString(),
+      isError,
+    };
+    setMessages((prev) => [...prev, message]);
+  };
+
+  const storeKey = async (key: string) => {
+    if (!account || !wallet) {
+      addMessage("Please connect your wallet first.", "system", true);
+      return;
     }
-  }
 
-  // AI Response Function - Replace this with your actual AI integration
-  const generateAIResponse = async (userMessage: string) => {
-    const response = await fetch("http://localhost:3002/generate-full-suite", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ 
-        prompt: userMessage,
-        walletAddress: account?.address ? account.address.toString() : null // Convert to string safely
-      }),
-    });
+    try {
+      const payload = {
+        type: "entry_function_payload",
+        function: "0xc28ce059e5716689b04a61d41593d3d8f33e85cd9534ebe64d551828468d6943::KeyStorage::add_key",
+        type_arguments: [],
+        arguments: [Array.from(new TextEncoder().encode(key))],
+      };
 
-    if (!response.ok) {
-      console.error("API call failed:", response.status, response.statusText);
+      const tx = await signAndSubmitTransaction(payload);
+      console.log("Transaction response:", tx);
+
+      addMessage(`Key stored successfully! Tx: ${tx.hash}`, "system");
+    } catch (err) {
+      console.error("Failed to store key:", err);
+      addMessage("Error: Failed to store key.", "system", true);
+    }
+  };
+
+  const DeployContract = async () => {
+    setIsProcessing(true);
+    addMessage("Deploying contract...", "system");
+
+    try {
+      const response = await axios.post(`${apiUrl}/deploy-contract`);
+      console.log(response.data);
+
+      if (response.data.success) {
+        addMessage("Contract deployed successfully!", "system");
+        // Automatically store a key after deployment
+        await storeKey("MySecretKey123");
+      } else {
+        addMessage("Contract deployment failed.", "system", true);
+      }
+    } catch (error) {
+      console.error("Deployment error:", error);
+      addMessage("Error deploying contract. Please check if the server is running.", "system", true);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const generateAIResponse = async (userMessage: string): Promise<string | null> => {
+    try {
+      const response = await fetch(`${apiUrl}/generate-full-suite`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          prompt: userMessage,
+          walletAddress: account?.address ? account.address.toString() : null,
+          connected: connected
+        }),
+      });
+
+      if (!response.ok) {
+        console.error("API call failed:", response.status, response.statusText);
+        return null;
+      }
+
+      const data = await response.json();
+      console.log("API response data:", data);
+      return data.summary || data.response || "I received your message but couldn't generate a proper response.";
+    } catch (error) {
+      console.error("Error calling AI API:", error);
       return null;
     }
-
-    const data = await response.json();
-    console.log("API response data:", data);
-    return data.summary || data;
   };
 
   const handleWalletConnect = async (walletName: string) => {
     try {
+      addMessage(`Connecting to ${walletName}...`, "system");
       await connect(walletName);
       setShowWalletOptions(false);
       
-      // Add a system message about wallet connection
-      const connectionMessage = {
-        text: `Wallet connected successfully! Address: ${account?.address || 'Loading...'}`,
-        sender: "system",
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, connectionMessage]);
+      // Wait a moment for account to be populated
+      setTimeout(() => {
+        const address = account?.address?.toString() || "Unknown";
+        addMessage(`Wallet connected successfully! Address: ${formatAddress(address)}`, "system");
+      }, 500);
     } catch (error) {
       console.error("Failed to connect wallet:", error);
-      const errorMessage = {
-        text: "Failed to connect wallet. Please try again.",
-        sender: "system",
-        timestamp: new Date().toISOString(),
-        isError: true,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      addMessage("Failed to connect wallet. Please try again.", "system", true);
     }
   };
 
   const handleWalletDisconnect = async () => {
     try {
       await disconnect();
-      const disconnectionMessage = {
-        text: "Wallet disconnected successfully.",
-        sender: "system",
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, disconnectionMessage]);
+      addMessage("Wallet disconnected successfully.", "system");
     } catch (error) {
       console.error("Failed to disconnect wallet:", error);
+      addMessage("Failed to disconnect wallet.", "system", true);
     }
   };
 
   const handleSend = async () => {
     if (!inputMessage.trim() || isProcessing) return;
 
-    // Add user message
-    const userMessage = {
-      text: inputMessage,
-      sender: "user",
-      timestamp: new Date().toISOString(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
+    const userMessageText = inputMessage.trim();
     setInputMessage("");
+    
+    // Add user message
+    addMessage(userMessageText, "user");
     setIsProcessing(true);
 
     try {
       // Generate AI response
-      const aiResponseText = await generateAIResponse(inputMessage);
+      const aiResponseText = await generateAIResponse(userMessageText);
 
-      const aiMessage = {
-        text: aiResponseText,
-        sender: "ai",
-        timestamp: new Date().toISOString(),
-      };
-
-      setMessages((prev) => [...prev, aiMessage]);
+      if (aiResponseText) {
+        addMessage(aiResponseText, "ai");
+      } else {
+        addMessage("Sorry, I encountered an error while processing your request. Please check if the server is running and try again.", "ai", true);
+      }
     } catch (error) {
       console.error("Error generating AI response:", error);
-
-      const errorMessage = {
-        text: "Sorry, I encountered an error while processing your request. Please try again.",
-        sender: "ai",
-        timestamp: new Date().toISOString(),
-        isError: true,
-      };
-
-      setMessages((prev) => [...prev, errorMessage]);
+      addMessage("Sorry, I encountered an unexpected error. Please try again.", "ai", true);
     } finally {
       setIsProcessing(false);
     }
@@ -148,39 +192,53 @@ const Page = () => {
   };
 
   const formatAddress = (address?: HexString | string) => {
-  if (!address) return "";
-  const addrStr = typeof address === "string" ? address : address.toString();
-  return `${addrStr.slice(0, 6)}...${addrStr.slice(-4)}`;
-};
-
+    if (!address) return "Unknown";
+    const addrStr = typeof address === "string" ? address : address.toString();
+    return `${addrStr.slice(0, 6)}...${addrStr.slice(-4)}`;
+  };
 
   const clearChat = () => {
     setMessages([]);
+    // Re-add welcome message
+    setTimeout(() => {
+      addMessage("Chat cleared! How can I help you today?", "ai");
+    }, 100);
   };
+
+  // Handle click outside to close wallet options
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showWalletOptions && !target.closest('.wallet-dropdown')) {
+        setShowWalletOptions(false);
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [showWalletOptions]);
 
   return (
     <div className={`flex ${bgClass} ${textClass} min-h-screen`}>
       {/* Chat Interface */}
-      <div
-        className={`w-1/4 ${cardClass} border-r ${borderClass} flex flex-col`}
-      >
+      <div className={`w-1/4 ${cardClass} border-r ${borderClass} flex flex-col`}>
         {/* Header */}
-        <div
-          className={`p-4 border-b ${borderClass} flex items-center justify-between`}
-        >
+        <div className={`p-4 border-b ${borderClass} flex items-center justify-between`}>
           <h1 className="text-xl font-bold">AI Chat</h1>
           <div className="flex items-center gap-2">
             <button
               onClick={clearChat}
               className={`px-3 py-1 text-sm rounded-lg ${isDark ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"} transition-colors`}
+              disabled={isProcessing}
             >
               Clear
             </button>
             <button
-              onClick={(e)=>DeployContract()}
-              className={`px-3 py-1 text-sm rounded-lg ${isDark ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"} transition-colors`}
+              onClick={DeployContract}
+              className={`px-3 py-1 text-sm rounded-lg ${isDark ? "bg-blue-700 hover:bg-blue-600" : "bg-blue-200 hover:bg-blue-300"} transition-colors ${isProcessing ? "opacity-50 cursor-not-allowed" : ""}`}
+              disabled={isProcessing}
             >
-              Deploy
+              {isProcessing ? "..." : "Deploy"}
             </button>
             <button
               onClick={() => setIsDark(!isDark)}
@@ -214,7 +272,7 @@ const Page = () => {
               </button>
             </div>
           ) : (
-            <div className="relative">
+            <div className="relative wallet-dropdown">
               <button
                 onClick={() => setShowWalletOptions(!showWalletOptions)}
                 className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg border ${borderClass} ${isDark ? "hover:bg-gray-800" : "hover:bg-gray-100"} transition-colors`}
@@ -245,7 +303,11 @@ const Page = () => {
                         </button>
                       ))
                     ) : (
-                      <p className="text-sm text-gray-500 p-2">No wallets detected</p>
+                      <div className="p-2 text-center">
+                        <AlertCircle size={16} className="mx-auto mb-1 opacity-50" />
+                        <p className="text-sm text-gray-500">No wallets detected</p>
+                        <p className="text-xs text-gray-400 mt-1">Please install a compatible Aptos wallet</p>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -255,7 +317,7 @@ const Page = () => {
         </div>
 
         {/* Chat Messages */}
-        <div className="flex-1 overflow-y-scroll p-4 flex flex-col gap-3">
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
           {messages && Array.isArray(messages) && messages.length > 0 ? (
             messages.map((msg, idx) => (
               <div key={idx} className="flex flex-col gap-1">
@@ -317,6 +379,8 @@ const Page = () => {
               <span>AI is thinking...</span>
             </div>
           )}
+          
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Input Box */}
@@ -328,9 +392,12 @@ const Page = () => {
               placeholder="Type your message..."
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
-              onKeyDown={(e) =>
-                e.key === "Enter" && !isProcessing && handleSend()
-              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
               disabled={isProcessing}
             />
             <button
@@ -357,6 +424,7 @@ const Page = () => {
         className="h-[100vh] w-[75vw]"
         src="http://localhost:8080/?folder=/home/coder/project"
         frameBorder="0"
+        title="Development Environment"
       />
     </div>
   );

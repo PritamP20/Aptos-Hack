@@ -1,226 +1,232 @@
-address 0x1 {
-    module StakingTest {
-        use std::signer;
-        use std::vector;
-        use std::errors;
-        use std::option;
-        use std::event;
-        use 0x1::Staking;
+module 0xe8d532de3a122759fdf2ed724e8461584bf2b282a55f500fd6473e814da7d264::student_management_tests {
+    use std::signer;
+    use std::string;
+    use std::vector;
+    use std::option;
 
-        /// Helper to initialize the staking contract with a given reward rate
-        fun setup(owner: &signer, reward_rate: u64) {
-            Staking::initialize(owner, reward_rate);
-        }
+    use 0xe8d532de3a122759fdf2ed724e8461584bf2b282a55f500fd6473e814da7d264::student_management;
 
-        /// Helper to get user info from StakingState resource
-        fun get_user_info(addr: address): option::Option<(u64, u64)> {
-            let state = borrow_global<Staking::StakingState>(0x1);
-            Staking::get_user_info(&state, addr)
-        }
+    #[test]
+    fun test_init_account() {
+        let alice = @0x1;
+        let alice_signer = signer::spec_test_signer(alice);
 
-        /// Helper to get total staked tokens
-        fun get_total_staked(): u64 {
-            let state = borrow_global<Staking::StakingState>(0x1);
-            Staking::get_total_staked(&state)
-        }
+        student_management::init_account(&alice_signer);
 
-        /// Test that initialize sets up the contract correctly and prevents double init
-        #[test]
-        fun test_initialize_and_double_init() {
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
-            let state = borrow_global<Staking::StakingState>(0x1);
-            assert!(state.reward_rate == 10, 1);
-            assert!(state.total_staked == 0, 2);
+        // Should be able to fetch empty student list
+        let students = student_management::get_students(alice);
+        assert!(vector::is_empty<Student>(students), 1);
+    }
 
-            // Attempt to initialize again should abort
-            let res = std::debug::catch_abort(|| Staking::initialize(&owner, 20));
-            assert!(res.is_abort(), 3);
-        }
+    #[test]
+    fun test_add_student() {
+        let bob = @0x2;
+        let bob_signer = signer::spec_test_signer(bob);
 
-        /// Test staking with valid amount updates state and emits event
-        #[test]
-        fun test_stake_basic() {
-            let user = signer::spec_signer(0x2);
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 100);
+        student_management::init_account(&bob_signer);
 
-            Staking::stake(&user, 50);
-            let info_opt = get_user_info(signer::address_of(&user));
-            assert!(option::is_some(&info_opt), 1);
-            let (staked_amount, rewards) = option::extract(info_opt);
-            assert!(staked_amount == 50, 2);
-            assert!(rewards == 0, 3);
+        let name1 = string::utf8(b"Alice");
+        let age1 = 20u8;
+        student_management::add_student(&bob_signer, name1, age1);
 
-            let total = get_total_staked();
-            assert!(total == 50, 4);
-        }
+        let students = student_management::get_students(bob);
+        assert!(vector::length<Student>(students) == 1, 2);
 
-        /// Test staking with zero amount aborts with EZERO_AMOUNT
-        #[test]
-        fun test_stake_zero_amount_abort() {
-            let user = signer::spec_signer(0x3);
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+        let s = vector::borrow<Student>(&students, 0);
+        assert!(s.id == 1, 3);
+        assert!(string::eq(&s.name, &string::utf8(b"Alice")), 4);
+        assert!(s.age == 20, 5);
+        assert!(s.owner == bob, 6);
+    }
 
-            let res = std::debug::catch_abort_code(|| Staking::stake(&user, 0));
-            assert!(res == errors::invalid_argument(Staking::EZERO_AMOUNT), 1);
-        }
+    #[test]
+    fun test_add_multiple_students() {
+        let carol = @0x3;
+        let carol_signer = signer::spec_test_signer(carol);
 
-        /// Test unstaking without staking aborts with ENOT_STAKED
-        #[test]
-        fun test_unstake_without_stake_abort() {
-            let user = signer::spec_signer(0x4);
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+        student_management::init_account(&carol_signer);
 
-            let res = std::debug::catch_abort_code(|| Staking::unstake(&user, 10));
-            assert!(res == errors::not_found(Staking::ENOT_STAKED), 1);
-        }
+        student_management::add_student(&carol_signer, string::utf8(b"Bob"), 18u8);
+        student_management::add_student(&carol_signer, string::utf8(b"Charlie"), 21u8);
 
-        /// Test unstaking more than staked amount aborts with EINSUFFICIENT_BALANCE
-        #[test]
-        fun test_unstake_more_than_staked_abort() {
-            let user = signer::spec_signer(0x5);
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+        let students = student_management::get_students(carol);
+        assert!(vector::length<Student>(students) == 2, 7);
 
-            Staking::stake(&user, 30);
-            let res = std::debug::catch_abort_code(|| Staking::unstake(&user, 50));
-            assert!(res == errors::invalid_argument(Staking::EINSUFFICIENT_BALANCE), 1);
-        }
+        let s0 = vector::borrow<Student>(&students, 0);
+        assert!(s0.id == 1, 8);
 
-        /// Test successful unstake decreases staked amount and total_staked, and removes user if fully unstaked
-        #[test]
-        fun test_unstake_partial_and_full() {
-            let user = signer::spec_signer(0x6);
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+        let s1 = vector::borrow<Student>(&students, 1);
+        assert!(s1.id == 2, 9);
+    }
 
-            Staking::stake(&user, 40);
+    #[test]
+    fun test_update_student_success() {
+        let dave = @0x4;
+        let dave_signer = signer::spec_test_signer(dave);
 
-            // Partial unstake
-            Staking::unstake(&user, 15);
-            let info_opt = get_user_info(signer::address_of(&user));
-            assert!(option::is_some(&info_opt), 1);
-            let (staked_amount, _) = option::extract(info_opt);
-            assert!(staked_amount == 25, 2);
+        student_management::init_account(&dave_signer);
 
-            let total = get_total_staked();
-            assert!(total == 25, 3);
+        student_management::add_student(&dave_signer, string::utf8(b"Dave"), 19u8);
 
-            // Full unstake
-            Staking::unstake(&user, 25);
-            let info_opt2 = get_user_info(signer::address_of(&user));
-            assert!(option::is_none(&info_opt2), 4);
+        // Update student id 1
+        student_management::update_student(&dave_signer, 1, string::utf8(b"David"), 20u8);
 
-            let total2 = get_total_staked();
-            assert!(total2 == 0, 5);
-        }
+        let s_opt = student_management::get_student(dave, 1);
+        assert!(option::is_some<Student>(&s_opt), 10);
+        let s = option::extract<Student>(s_opt);
+        assert!(string::eq(&s.name, &string::utf8(b"David")), 11);
+        assert!(s.age == 20, 12);
+    }
 
-        /// Test claiming rewards without staking aborts with ENOT_STAKED
-        #[test]
-        fun test_claim_rewards_without_stake_abort() {
-            let user = signer::spec_signer(0x7);
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+    #[test]
+    fun test_update_student_not_found_should_abort() {
+        let eve = @0x5;
+        let eve_signer = signer::spec_test_signer(eve);
 
-            let res = std::debug::catch_abort_code(|| Staking::claim_rewards(&user));
-            assert!(res == errors::not_found(Staking::ENOT_STAKED), 1);
-        }
+        student_management::init_account(&eve_signer);
 
-        /// Test claiming rewards with zero rewards aborts with invalid_state
-        #[test]
-        fun test_claim_rewards_with_zero_rewards_abort() {
-            let user = signer::spec_signer(0x8);
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+        let res = move {
+            student_management::update_student(&eve_signer, 99, string::utf8(b"NotExists"), 22u8);
+            false
+        } catch {
+            true
+        };
+        assert!(res, 13);
+    }
 
-            Staking::stake(&user, 10);
-            let res = std::debug::catch_abort_code(|| Staking::claim_rewards(&user));
-            assert!(res == errors::invalid_state(0), 1);
-        }
+    #[test]
+    fun test_update_student_not_owner_should_abort() {
+        let owner = @0x6;
+        let not_owner = @0x7;
+        let owner_signer = signer::spec_test_signer(owner);
+        let not_owner_signer = signer::spec_test_signer(not_owner);
 
-        /// Test claiming rewards after manual reward manipulation (simulate rewards accrued)
-        #[test]
-        fun test_claim_rewards_success() {
-            let user = signer::spec_signer(0x9);
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+        student_management::init_account(&owner_signer);
+        student_management::add_student(&owner_signer, string::utf8(b"OwnerStudent"), 30u8);
 
-            Staking::stake(&user, 100);
+        // Second account tries to update owner's student
+        let res = move {
+            student_management::update_student(&not_owner_signer, 1, string::utf8(b"Imposter"), 99u8);
+            false
+        } catch {
+            true
+        };
+        assert!(res, 14);
+    }
 
-            // Manually update rewards for testing: simulate rewards accrued
-            {
-                let state = borrow_global_mut<Staking::StakingState>(0x1);
-                let idx_opt = Staking::find_user_index(&state.user_info, signer::address_of(&user));
-                assert!(option::is_some(&idx_opt), 999);
-                let idx = option::extract(idx_opt);
-                let (_, ref mut user_info) = *vector::borrow_mut(&mut state.user_info, idx);
-                user_info.rewards = 500;
-            }
+    #[test]
+    fun test_remove_student_success() {
+        let frank = @0x8;
+        let frank_signer = signer::spec_test_signer(frank);
 
-            Staking::claim_rewards(&user);
+        student_management::init_account(&frank_signer);
 
-            // After claim, rewards should reset to 0
-            let info_opt = get_user_info(signer::address_of(&user));
-            assert!(option::is_some(&info_opt), 1);
-            let (_, rewards) = option::extract(info_opt);
-            assert!(rewards == 0, 2);
-        }
+        student_management::add_student(&frank_signer, string::utf8(b"Frank"), 21u8);
 
-        /// Test multiple users staking and unstaking correctly track total staked
-        #[test]
-        fun test_multiple_users_stake_unstake() {
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+        student_management::remove_student(&frank_signer, 1);
 
-            let user1 = signer::spec_signer(0xA);
-            let user2 = signer::spec_signer(0xB);
+        let students = student_management::get_students(frank);
+        assert!(vector::is_empty<Student>(students), 15);
 
-            Staking::stake(&user1, 70);
-            Staking::stake(&user2, 30);
+        let s_opt = student_management::get_student(frank, 1);
+        assert!(option::is_none<Student>(&s_opt), 16);
+    }
 
-            let total = get_total_staked();
-            assert!(total == 100, 1);
+    #[test]
+    fun test_remove_student_not_found_should_abort() {
+        let grace = @0x9;
+        let grace_signer = signer::spec_test_signer(grace);
 
-            Staking::unstake(&user1, 20);
-            let total2 = get_total_staked();
-            assert!(total2 == 80, 2);
+        student_management::init_account(&grace_signer);
 
-            Staking::unstake(&user2, 30);
-            let total3 = get_total_staked();
-            assert!(total3 == 50, 3);
-        }
+        let res = move {
+            student_management::remove_student(&grace_signer, 123);
+            false
+        } catch {
+            true
+        };
+        assert!(res, 17);
+    }
 
-        /// Test that calling update_rewards updates reward_per_token_stored and user rewards properly
-        #[test]
-        fun test_update_rewards_effect() {
-            let owner = signer::spec_signer(0x1);
-            setup(&owner, 10);
+    #[test]
+    fun test_remove_student_not_owner_should_abort() {
+        let owner = @0xa;
+        let not_owner = @0xb;
+        let owner_signer = signer::spec_test_signer(owner);
+        let not_owner_signer = signer::spec_test_signer(not_owner);
 
-            let user = signer::spec_signer(0xC);
-            Staking::stake(&user, 100);
+        student_management::init_account(&owner_signer);
+        student_management::add_student(&owner_signer, string::utf8(b"OwnerStudent"), 23u8);
 
-            // Manually set last_update_time far in past to simulate time passage
-            {
-                let state = borrow_global_mut<Staking::StakingState>(0x1);
-                state.last_update_time = 0; // reset to 0
-                state.reward_per_token_stored = 0;
-            }
+        let res = move {
+            student_management::remove_student(&not_owner_signer, 1);
+            false
+        } catch {
+            true
+        };
+        assert!(res, 18);
+    }
 
-            // Call stake again to trigger update_rewards internally
-            Staking::stake(&user, 0);
+    #[test]
+    fun test_get_students_empty_before_init() {
+        let h = @0xc;
+        // No init_account called
+        let students = student_management::get_students(h);
+        assert!(vector::is_empty<Student>(students), 19);
+    }
 
-            // After update_rewards, reward_per_token_stored should be incremented (non-zero)
-            let state = borrow_global<Staking::StakingState>(0x1);
-            assert!(state.reward_per_token_stored > 0, 1);
+    #[test]
+    fun test_get_student_empty_before_init() {
+        let i = @0xd;
+        let s_opt = student_management::get_student(i, 1);
+        assert!(option::is_none<Student>(&s_opt), 20);
+    }
 
-            // User rewards also updated
-            let info_opt = get_user_info(signer::address_of(&user));
-            assert!(option::is_some(&info_opt), 2);
-            let (_, rewards) = option::extract(info_opt);
-            assert!(rewards >= 0, 3); // rewards may be zero if no time diff, but non-negative
-        }
+    #[test]
+    fun test_get_student_non_existent_id() {
+        let j = @0xe;
+        let j_signer = signer::spec_test_signer(j);
+        student_management::init_account(&j_signer);
+        student_management::add_student(&j_signer, string::utf8(b"Jenny"), 22u8);
+
+        let s_opt = student_management::get_student(j, 999);
+        assert!(option::is_none<Student>(&s_opt), 21);
+    }
+
+    #[test]
+    fun test_id_auto_increment_after_deletion() {
+        let k = @0xf;
+        let k_signer = signer::spec_test_signer(k);
+
+        student_management::init_account(&k_signer);
+
+        student_management::add_student(&k_signer, string::utf8(b"Karl"), 25u8);
+        student_management::add_student(&k_signer, string::utf8(b"Karl2"), 26u8);
+
+        student_management::remove_student(&k_signer, 1);
+
+        student_management::add_student(&k_signer, string::utf8(b"Karl3"), 27u8);
+
+        let students = student_management::get_students(k);
+        assert!(vector::length<Student>(students) == 2, 22);
+
+        let s0 = vector::borrow<Student>(&students, 0);
+        let s1 = vector::borrow<Student>(&students, 1);
+
+        assert!(s0.id == 2 || s1.id == 2, 23);
+        assert!(s0.id == 3 || s1.id == 3, 24);
+    }
+
+    #[test]
+    fun test_event_handles_exist() {
+        let l = @0x10;
+        let l_signer = signer::spec_test_signer(l);
+
+        student_management::init_account(&l_signer);
+
+        // This test simply checks init_account does not abort and the account is ready for events
+        student_management::add_student(&l_signer, string::utf8(b"Leo"), 19u8);
+        student_management::update_student(&l_signer, 1, string::utf8(b"Leon"), 20u8);
+        student_management::remove_student(&l_signer, 1);
     }
 }

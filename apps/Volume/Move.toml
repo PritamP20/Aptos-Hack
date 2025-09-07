@@ -1,18 +1,12 @@
 [package]
-name = "staking"
-version = "0.1.0"
-authors = ["Your Name <youremail@example.com>"]
+name = "Contract"
+version = "0.0.1"
+authors = ["Move Project Manager"]
 
 [addresses]
-Std = "0x1"
+Contract = "0xe8d532de3a122759fdf2ed724e8461584bf2b282a55f500fd6473e814da7d264"
 
-[dependencies]
-# No external dependencies beyond std
-
-[features]
-default = []
-
-[[modules]]
-name = "Staking"
-address = "0x1"
-path = "sources/staking.move"
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-core.git"
+rev = "mainnet"
+subdir = "aptos-move/framework/aptos-framework"
